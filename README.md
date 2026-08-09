@@ -1,18 +1,18 @@
-# paperless-edoc
+# paperless-esig
 
-Third-party parser for Paperless-ngx that adds support for **ETSI ASiC-E**
-signed documents — the container format used for electronically signed
-documents across the EU under the eIDAS regulation:
+Third-party parser for Paperless-ngx that adds support for **EU
+electronically signed documents** — ETSI ASiC-E containers as used under
+the eIDAS regulation:
 
 - `.edoc` — Latvia (EDOC 2.0)
 - `.asice` — Estonia
 - `.bdoc` — Estonia
 - `.adoc` — Lithuania
 
-These files bundle the signed document (usually a PDF), an XAdES signature,
-and a manifest inside a ZIP container. Paperless-ngx cannot consume them
-out of the box: libmagic reports them as `application/zip` and they are
-rejected.
+These files bundle the signed document (usually a PDF), an electronic
+signature, and a manifest inside a ZIP container. Paperless-ngx cannot
+consume them out of the box: libmagic reports them as `application/zip`
+and they are rejected.
 
 ## What it does
 
@@ -20,7 +20,7 @@ rejected.
 - Extracts the signed PDF as the display/archive rendition (browsers cannot
   render ZIP containers)
 - Extracts the text of the inner documents for search
-- Uses the **XAdES signing time** as the document date
+- Uses the **signature signing time** as the document date
 - Shows the **signature metadata** in the metadata tab: signer name,
   organisation and country, signing time, certificate chain and issuer,
   RFC 3161 timestamp authority, OCSP presence
@@ -32,14 +32,19 @@ rejected.
   documents merged into a single rendition)
 - **Assigns the signer as the document's correspondent**: after
   consumption, if no correspondent was determined by content matching or
-  workflow rules, the XAdES signer (organisation preferred over common
-  name) is looked up case-insensitively and created if it does not exist,
-  and the document is re-indexed so the correspondent is searchable
-  immediately. Disable with `PAPERLESS_EDOC_ASSIGN_SIGNER_AS_CORRESPONDENT=false`
+  workflow rules, the signer (organisation preferred over common name) is
+  looked up case-insensitively and created if it does not exist, and the
+  document is re-indexed so the correspondent is searchable immediately.
+  Disable with `PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT=false`
   (default: enabled). Known limitations: the assignment is not recorded in
   the audit log, and the UI may show the new correspondent as "Private"
   until the page is reloaded (the frontend's name-list caches are not
   invalidated when a correspondent is created server-side).
+
+## Signature formats
+
+Currently **XAdES** signatures are parsed and verified. Support for
+**CAdES** (and other signature types found in the wild) is planned.
 
 ## Installation
 
@@ -50,7 +55,7 @@ are needed.
 ### Bare metal
 
 ```sh
-uv pip install paperless-edoc
+uv pip install paperless-esig
 ```
 
 (install into the same virtual environment that runs Paperless-ngx)
@@ -62,7 +67,7 @@ image:
 
 ```dockerfile
 FROM ghcr.io/paperless-ngx/paperless-ngx:latest
-RUN uv pip install --system --no-python-downloads paperless-edoc
+RUN uv pip install --system --no-python-downloads paperless-esig
 ```
 
 Point your compose file at this image instead of the stock one.

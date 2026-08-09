@@ -33,7 +33,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.x509.oid import NameOID
 from lxml import etree
 
-from paperless_edoc.parser import EDOC_CONTAINER_MIME_TYPE
+from paperless_esig.parser import ESIG_CONTAINER_MIME_TYPE
 
 _XMLDSIG_NS: str = "http://www.w3.org/2000/09/xmldsig#"
 _XADES_NS: str = "http://uri.etsi.org/01903/v1.3.2#"
@@ -666,7 +666,7 @@ def build_manifest(
     )
     root_attributes: dict[str, str] = {
         f"{{{_OD_MANIFEST_NS}}}full-path": "/",
-        f"{{{_OD_MANIFEST_NS}}}media-type": EDOC_CONTAINER_MIME_TYPE,
+        f"{{{_OD_MANIFEST_NS}}}media-type": ESIG_CONTAINER_MIME_TYPE,
     }
     etree.SubElement(root, f"{{{_OD_MANIFEST_NS}}}file-entry", root_attributes)
     document_attributes: dict[str, str] = {
@@ -686,7 +686,7 @@ def build_manifest(
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def build_edoc_container(
+def build_esig_container(
     *,
     document_data: bytes | None = None,
     document_name: str = "document.pdf",
@@ -704,7 +704,7 @@ def build_edoc_container(
     include_signer_in_certificate_values: bool = False,
     include_manifest: bool = True,
     include_signature: bool = True,
-    container_mimetype: str = EDOC_CONTAINER_MIME_TYPE,
+    container_mimetype: str = ESIG_CONTAINER_MIME_TYPE,
     extra_entries: dict[str, bytes] | None = None,
     signed_documents: list[tuple[str, bytes]] | None = None,
     document_media_type: str = "application/pdf",
@@ -808,7 +808,7 @@ def build_nested_edoc_container(
     ``ds:Reference``, so the digest verification in the parser stays
     valid.
     """
-    inner_bytes = build_edoc_container(
+    inner_bytes = build_esig_container(
         document_data=inner_document_data,
         document_name=inner_document_name,
         signing_time=signing_time,
@@ -823,7 +823,7 @@ def build_nested_edoc_container(
     # e-archive bundles (companion documents first, container last).
     documents.append((nested_name, inner_bytes))
 
-    return build_edoc_container(
+    return build_esig_container(
         document_data=inner_bytes,
         document_name=nested_name,
         signed_name=nested_name,

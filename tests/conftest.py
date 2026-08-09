@@ -1,5 +1,5 @@
 """
-Pytest configuration for the paperless-edoc parser package.
+Pytest configuration for the paperless-esig parser package.
 
 The parser (and ``documents.parsers`` / ``paperless.parsers`` that it
 imports) require a Django environment, so the tests configure a minimal
@@ -14,22 +14,22 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from paperless_edoc.parser import EdocDocumentParser
+from paperless_esig.parser import ESigDocumentParser
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
 
 @pytest.fixture()
-def edoc_parser() -> Generator[EdocDocumentParser, None, None]:
-    """Yield an EdocDocumentParser and clean up its temporary directory afterwards.
+def esig_parser() -> Generator[ESigDocumentParser, None, None]:
+    """Yield an ESigDocumentParser and clean up its temporary directory afterwards.
 
     Yields
     ------
-    EdocDocumentParser
+    ESigDocumentParser
         A ready-to-use parser instance.
     """
-    with EdocDocumentParser() as parser:
+    with ESigDocumentParser() as parser:
         yield parser
 
 
@@ -39,6 +39,6 @@ def edoc_container_bytes() -> bytes:
 
     Built by the test-only fixture helpers (no real-world personal data).
     """
-    from edoc_fixtures import build_edoc_container
+    from esig_fixtures import build_esig_container
 
-    return build_edoc_container()
+    return build_esig_container()

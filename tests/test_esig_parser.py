@@ -1,8 +1,8 @@
 """
-Tests for paperless_edoc.parser.EdocDocumentParser and its helpers.
+Tests for paperless_esig.parser.ESigDocumentParser and its helpers.
 
 Synthetic EDOC 2.0 (ASiC-E) containers are built in-test by the helpers
-in ``edoc_fixtures.py`` — real Latvian sample files contain personal data
+in ``esig_fixtures.py`` — real Latvian sample files contain personal data
 and are therefore not committed to the repository.  The cryptographic
 structure of the fixtures mirrors real containers, which are verified
 manually against the genuine eParaksts samples.
@@ -25,16 +25,16 @@ from django.test import override_settings
 from documents.parsers import ParseError
 from paperless.parsers import MetadataEntry, ParserContext, ParserProtocol
 
-from edoc_fixtures import (
-    build_edoc_container,
+from esig_fixtures import (
+    build_esig_container,
     build_nested_edoc_container,
     build_simple_docx,
     build_simple_pdf,
 )
-from paperless_edoc.parser import (
-    EDOC_CONTAINER_MIME_TYPE,
-    EdocDocumentParser,
-    is_edoc_container,
+from paperless_esig.parser import (
+    ESIG_CONTAINER_MIME_TYPE,
+    ESigDocumentParser,
+    is_esig_container,
 )
 
 
@@ -46,40 +46,40 @@ def _write_container(
 ) -> Path:
     """Write a synthetic EDOC container to *tmp_path* and return its path."""
     path = tmp_path / filename
-    path.write_bytes(build_edoc_container(**kwargs))
+    path.write_bytes(build_esig_container(**kwargs))
     return path
 
 
 class TestEdocParserProtocol:
-    """Verify that EdocDocumentParser satisfies the ParserProtocol contract."""
+    """Verify that ESigDocumentParser satisfies the ParserProtocol contract."""
 
     def test_isinstance_satisfies_protocol(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
     ) -> None:
-        assert isinstance(edoc_parser, ParserProtocol)
+        assert isinstance(esig_parser, ParserProtocol)
 
     def test_class_attributes_present(self) -> None:
-        assert isinstance(EdocDocumentParser.name, str) and EdocDocumentParser.name
+        assert isinstance(ESigDocumentParser.name, str) and ESigDocumentParser.name
         assert (
-            isinstance(EdocDocumentParser.version, str) and EdocDocumentParser.version
+            isinstance(ESigDocumentParser.version, str) and ESigDocumentParser.version
         )
-        assert isinstance(EdocDocumentParser.author, str) and EdocDocumentParser.author
-        assert isinstance(EdocDocumentParser.url, str) and EdocDocumentParser.url
+        assert isinstance(ESigDocumentParser.author, str) and ESigDocumentParser.author
+        assert isinstance(ESigDocumentParser.url, str) and ESigDocumentParser.url
 
     def test_supported_mime_types(self) -> None:
-        mime_types = EdocDocumentParser.supported_mime_types()
+        mime_types = ESigDocumentParser.supported_mime_types()
         assert isinstance(mime_types, dict)
         assert mime_types == {
             "application/zip": ".edoc",
-            EDOC_CONTAINER_MIME_TYPE: ".asice",
+            ESIG_CONTAINER_MIME_TYPE: ".asice",
         }
 
     def test_supported_extensions_include_member_states(self) -> None:
         import mimetypes
 
         extensions = set()
-        for mime_type, ext in EdocDocumentParser.supported_mime_types().items():
+        for mime_type, ext in ESigDocumentParser.supported_mime_types().items():
             extensions.update(mimetypes.guess_all_extensions(mime_type))
             extensions.add(ext)
         assert {".edoc", ".asice", ".bdoc", ".adoc"} <= extensions
@@ -90,8 +90,8 @@ class TestEdocParserProtocol:
         # The API/mail validation paths call score() without a path (and
         # with an empty filename); any application/zip file must then be
         # accepted so ASiC-E uploads pass validation.
-        assert EdocDocumentParser.score("application/zip", "") == 10
-        assert EdocDocumentParser.score("application/zip", "document.zip") == 10
+        assert ESigDocumentParser.score("application/zip", "") == 10
+        assert ESigDocumentParser.score("application/zip", "document.zip") == 10
 
     def test_score_with_path_inspects_content(
         self,
@@ -100,47 +100,47 @@ class TestEdocParserProtocol:
     ) -> None:
         container = _write_container(tmp_path, filename="document.edoc")
         assert (
-            EdocDocumentParser.score("application/zip", "document.edoc", container)
+            ESigDocumentParser.score("application/zip", "document.edoc", container)
             == 10
         )
 
         plain_zip = tmp_path / "archive.zip"
         plain_zip.write_bytes(b"PK\x03\x04 not an ASiC container")
         assert (
-            EdocDocumentParser.score("application/zip", "archive.zip", plain_zip)
+            ESigDocumentParser.score("application/zip", "archive.zip", plain_zip)
             is None
         )
 
     def test_score_other_mime_types(self) -> None:
-        assert EdocDocumentParser.score("application/pdf", "document.pdf") is None
-        assert EdocDocumentParser.score("text/plain", "document.txt") is None
+        assert ESigDocumentParser.score("application/pdf", "document.pdf") is None
+        assert ESigDocumentParser.score("text/plain", "document.txt") is None
 
     def test_can_produce_archive_is_false(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
     ) -> None:
-        assert edoc_parser.can_produce_archive is False
+        assert esig_parser.can_produce_archive is False
 
     def test_requires_pdf_rendition_is_true(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
     ) -> None:
-        assert edoc_parser.requires_pdf_rendition is True
+        assert esig_parser.requires_pdf_rendition is True
 
     def test_get_page_count_returns_none_without_archive(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
     ) -> None:
         assert (
-            edoc_parser.get_page_count(
+            esig_parser.get_page_count(
                 Path("does-not-exist.edoc"),
-                EDOC_CONTAINER_MIME_TYPE,
+                ESIG_CONTAINER_MIME_TYPE,
             )
             is None
         )
 
     def test_context_manager_cleans_up_tempdir(self) -> None:
-        with EdocDocumentParser() as parser:
+        with ESigDocumentParser() as parser:
             tempdir = parser._tempdir
             assert tempdir.exists()
         assert not tempdir.exists()
@@ -149,25 +149,25 @@ class TestEdocParserProtocol:
 class TestEdocMimeHelpers:
     """Verify the libmagic workaround helpers."""
 
-    def test_is_edoc_container_path(
+    def test_is_esig_container_path(
         self,
         edoc_container_bytes: bytes,
         tmp_path: Path,
     ) -> None:
         path = _write_container(tmp_path)
-        assert is_edoc_container(path) is True
+        assert is_esig_container(path) is True
 
-    def test_is_edoc_container_bytes(self, edoc_container_bytes: bytes) -> None:
-        assert is_edoc_container(edoc_container_bytes) is True
+    def test_is_esig_container_bytes(self, edoc_container_bytes: bytes) -> None:
+        assert is_esig_container(edoc_container_bytes) is True
 
-    def test_is_edoc_container_plain_zip(self, tmp_path: Path) -> None:
+    def test_is_esig_container_plain_zip(self, tmp_path: Path) -> None:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("mimetype", "application/zip")
             archive.writestr("hello.txt", "hi")
-        assert is_edoc_container(buffer.getvalue()) is False
+        assert is_esig_container(buffer.getvalue()) is False
 
-    def test_is_edoc_container_encrypted_zip_does_not_raise(self) -> None:
+    def test_is_esig_container_encrypted_zip_does_not_raise(self) -> None:
         """Encrypted containers (allowed by ASiC-E) must not crash detection."""
 
         class _EncryptedZipStub:
@@ -184,14 +184,14 @@ class TestEdocMimeHelpers:
                 )
 
         with mock.patch(
-            "paperless_edoc.parser.zipfile.ZipFile",
+            "paperless_esig.parser.zipfile.ZipFile",
             return_value=_EncryptedZipStub(),
         ):
-            assert is_edoc_container(b"PK\x03\x04") is False
+            assert is_esig_container(b"PK\x03\x04") is False
 
-    def test_is_edoc_container_garbage(self) -> None:
-        assert is_edoc_container(b"not a zip at all") is False
-        assert is_edoc_container(b"") is False
+    def test_is_esig_container_garbage(self) -> None:
+        assert is_esig_container(b"not a zip at all") is False
+        assert is_esig_container(b"") is False
 
 
 class TestEdocContainerParsing:
@@ -200,7 +200,7 @@ class TestEdocContainerParsing:
     def test_parse_extracts_pdf_text(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(tmp_path)
@@ -209,16 +209,16 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
         assert mocked.called
-        assert edoc_parser.get_text() == "Hello EDOC"
+        assert esig_parser.get_text() == "Hello EDOC"
 
-        archive_path = edoc_parser.get_archive_path()
+        archive_path = esig_parser.get_archive_path()
         assert archive_path is not None
         assert archive_path.is_file()
         assert archive_path.read_bytes()[:4] == b"%PDF"
-        assert edoc_parser.get_date() == datetime.datetime(
+        assert esig_parser.get_date() == datetime.datetime(
             2026,
             1,
             15,
@@ -231,7 +231,7 @@ class TestEdocContainerParsing:
     def test_parse_returns_page_count(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(tmp_path)
@@ -240,16 +240,16 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        page_count = edoc_parser.get_page_count(path, EDOC_CONTAINER_MIME_TYPE)
+        page_count = esig_parser.get_page_count(path, ESIG_CONTAINER_MIME_TYPE)
         assert isinstance(page_count, int)
         assert page_count >= 1
 
     def test_parse_falls_back_to_pdf_creation_date(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(tmp_path, signing_time=None)
@@ -258,9 +258,9 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        assert edoc_parser.get_date() == datetime.datetime(
+        assert esig_parser.get_date() == datetime.datetime(
             2026,
             1,
             15,
@@ -273,7 +273,7 @@ class TestEdocContainerParsing:
     def test_parse_signing_time_with_offset(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         signing_time = datetime.datetime(
@@ -291,30 +291,30 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        assert edoc_parser.get_date() == signing_time
+        assert esig_parser.get_date() == signing_time
 
-    def test_parse_missing_file_raises(self, edoc_parser: EdocDocumentParser) -> None:
+    def test_parse_missing_file_raises(self, esig_parser: ESigDocumentParser) -> None:
         with pytest.raises(ParseError):
-            edoc_parser.parse(
+            esig_parser.parse(
                 Path("does-not-exist.edoc"),
-                EDOC_CONTAINER_MIME_TYPE,
+                ESIG_CONTAINER_MIME_TYPE,
             )
 
     def test_parse_plain_zip_raises(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = tmp_path / "plain.edoc"
         path.write_bytes(b"PK\x03\x04\x00\x00\x00\x00\x00\x00")
         with pytest.raises(ParseError, match="EDOC"):
-            edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+            esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
     def test_parse_wrong_container_mimetype_raises(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(
@@ -322,11 +322,11 @@ class TestEdocContainerParsing:
             container_mimetype="application/vnd.etsi.asic-s+zip",
         )
         with pytest.raises(ParseError, match="mimetype"):
-            edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+            esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
     def test_parse_container_without_pdf_raises(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(
@@ -335,21 +335,21 @@ class TestEdocContainerParsing:
             document_data=b"this is not a pdf",
         )
         with pytest.raises(ParseError, match="PDF"):
-            edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+            esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
     def test_parse_container_without_signatures_raises(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(tmp_path, include_signature=False)
         with pytest.raises(ParseError, match="signature"):
-            edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+            esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
     def test_parse_orders_signed_reference_before_manifest(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """The XAdES reference URI is merged before the manifest file list."""
@@ -367,18 +367,18 @@ class TestEdocContainerParsing:
             return_value="Signed PDF",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
         # Both inner documents are merged into the rendition, the signed
         # reference first.
-        assert edoc_parser.get_page_count(path, EDOC_CONTAINER_MIME_TYPE) == 2
-        text = edoc_parser.get_text()
+        assert esig_parser.get_page_count(path, ESIG_CONTAINER_MIME_TYPE) == 2
+        text = esig_parser.get_text()
         assert text.index("=== signed.pdf ===") < text.index("=== document.pdf ===")
 
     def test_get_thumbnail_uses_rendition(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = _write_container(tmp_path)
@@ -387,11 +387,11 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
         thumbnail = mocker.patch(
-            "paperless_edoc.parser.make_thumbnail_from_pdf",
+            "paperless_esig.parser.make_thumbnail_from_pdf",
             return_value=tmp_path / "thumb.webp",
         )
 
-        result = edoc_parser.get_thumbnail(path, EDOC_CONTAINER_MIME_TYPE)
+        result = esig_parser.get_thumbnail(path, ESIG_CONTAINER_MIME_TYPE)
 
         assert thumbnail.called
         assert result == tmp_path / "thumb.webp"
@@ -399,7 +399,7 @@ class TestEdocContainerParsing:
     def test_parse_c14n11_edoc_signatures_naming(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """The eParaksts mobile profile consumes end to end.
@@ -421,17 +421,17 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        archive_path = edoc_parser.get_archive_path()
+        archive_path = esig_parser.get_archive_path()
         assert archive_path is not None
         assert archive_path.read_bytes() == build_simple_pdf()
-        assert edoc_parser.get_text() == "Hello EDOC"
+        assert esig_parser.get_text() == "Hello EDOC"
 
     def test_parse_resolves_signer_name(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """The signer's organization is exposed after parsing."""
@@ -441,14 +441,14 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        assert edoc_parser.get_signer_name() == "Test Organization"
+        assert esig_parser.get_signer_name() == "Test Organization"
 
     def test_parse_signer_name_falls_back_to_common_name(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """Without an organization attribute the common name is used."""
@@ -458,14 +458,14 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        assert edoc_parser.get_signer_name() == "Test Signer"
+        assert esig_parser.get_signer_name() == "Test Signer"
 
     def test_parse_signer_name_ignores_placeholder_common_name(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """A placeholder CN (e.g. eParaksts mobile) yields no name."""
@@ -475,14 +475,14 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        assert edoc_parser.get_signer_name() is None
+        assert esig_parser.get_signer_name() is None
 
     def test_parse_signer_name_mobile_signing_variant(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """Signer resolution works for the eParaksts mobile profile."""
@@ -497,15 +497,15 @@ class TestEdocContainerParsing:
             return_value="Hello EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        assert edoc_parser.get_signer_name() == "Test Organization"
+        assert esig_parser.get_signer_name() == "Test Organization"
 
     def test_get_signer_name_none_before_parse(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
     ) -> None:
-        assert edoc_parser.get_signer_name() is None
+        assert esig_parser.get_signer_name() is None
 
 
 class TestEdocNestedContainers:
@@ -529,7 +529,7 @@ class TestEdocNestedContainers:
     def test_parse_nested_container_extracts_inner_pdf(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = self._write_nested_container(tmp_path)
@@ -538,11 +538,11 @@ class TestEdocNestedContainers:
             return_value="Hello Nested EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
         assert mocked.called
-        assert edoc_parser.get_text() == "Hello Nested EDOC"
-        assert edoc_parser.get_date() == datetime.datetime(
+        assert esig_parser.get_text() == "Hello Nested EDOC"
+        assert esig_parser.get_date() == datetime.datetime(
             2026,
             1,
             15,
@@ -552,7 +552,7 @@ class TestEdocNestedContainers:
             tzinfo=datetime.UTC,
         )
 
-        archive_path = edoc_parser.get_archive_path()
+        archive_path = esig_parser.get_archive_path()
         assert archive_path is not None
         assert archive_path.is_file()
         assert archive_path.read_bytes()[:4] == b"%PDF"
@@ -560,7 +560,7 @@ class TestEdocNestedContainers:
     def test_parse_nested_container_with_docx_entries(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """DOCX companions do not shadow the nested container."""
@@ -578,16 +578,16 @@ class TestEdocNestedContainers:
             return_value="Inner decision PDF",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        archive_path = edoc_parser.get_archive_path()
+        archive_path = esig_parser.get_archive_path()
         assert archive_path is not None
         assert archive_path.read_bytes() == inner_pdf
 
     def test_parse_nested_container_returns_page_count(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         path = self._write_nested_container(tmp_path)
@@ -596,22 +596,22 @@ class TestEdocNestedContainers:
             return_value="Hello Nested EDOC",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        page_count = edoc_parser.get_page_count(path, EDOC_CONTAINER_MIME_TYPE)
+        page_count = esig_parser.get_page_count(path, ESIG_CONTAINER_MIME_TYPE)
         assert isinstance(page_count, int)
         assert page_count >= 1
 
     def test_parse_nested_container_without_inner_pdf_raises(
         self,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
-        inner = build_edoc_container(
+        inner = build_esig_container(
             document_name="document.bin",
             document_data=b"this is not a pdf",
         )
-        outer = build_edoc_container(
+        outer = build_esig_container(
             document_data=inner,
             document_name="nested.edoc",
             signed_name="nested.edoc",
@@ -623,7 +623,7 @@ class TestEdocNestedContainers:
         path.write_bytes(outer)
 
         with pytest.raises(ParseError, match="PDF"):
-            edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+            esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
     def test_metadata_nested_container_uses_outer_signature(
         self,
@@ -635,8 +635,8 @@ class TestEdocNestedContainers:
             signer_org="Bundle Organization",
             signer_country="LV",
         )
-        with EdocDocumentParser() as parser:
-            metadata = parser.extract_metadata(path, EDOC_CONTAINER_MIME_TYPE)
+        with ESigDocumentParser() as parser:
+            metadata = parser.extract_metadata(path, ESIG_CONTAINER_MIME_TYPE)
 
         def _entry(prefix: str, key: str) -> str | None:
             for entry in metadata:
@@ -644,7 +644,7 @@ class TestEdocNestedContainers:
                     return entry["value"]
             return None
 
-        assert _entry("container", "mimetype") == EDOC_CONTAINER_MIME_TYPE
+        assert _entry("container", "mimetype") == ESIG_CONTAINER_MIME_TYPE
         assert _entry("container", "nested.edoc") == "application/octet-stream"
         assert _entry("signature", "signature_count") == "1"
         assert _entry("signature", "signing_time") == "2026-01-15T10:30:00Z"
@@ -659,7 +659,7 @@ class TestEdocNestedContainers:
     def test_parse_bundle_merges_docx_and_pdf(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """All inner documents merge into one rendition, text included."""
@@ -671,7 +671,7 @@ class TestEdocNestedContainers:
             },
         )
         mocker.patch.object(
-            edoc_parser,
+            esig_parser,
             "_office_to_pdf",
             return_value=build_simple_pdf(text="DOCX PAGE"),
         )
@@ -680,11 +680,11 @@ class TestEdocNestedContainers:
             return_value="Certificate text",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
         # Inner PDF plus both converted DOCX pages
-        assert edoc_parser.get_page_count(path, EDOC_CONTAINER_MIME_TYPE) == 3
-        text = edoc_parser.get_text()
+        assert esig_parser.get_page_count(path, ESIG_CONTAINER_MIME_TYPE) == 3
+        text = esig_parser.get_text()
         assert "Certificate text" in text
         assert "Decision text" in text
         assert "Protocol text" in text
@@ -695,7 +695,7 @@ class TestEdocNestedContainers:
     def test_parse_bundle_without_services_keeps_docx_text(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """Without Tika/Gotenberg the DOCX text is still extracted locally."""
@@ -708,19 +708,19 @@ class TestEdocNestedContainers:
             return_value="Certificate text",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        text = edoc_parser.get_text()
+        text = esig_parser.get_text()
         assert "Certificate text" in text
         assert "Decision text" in text
         # The DOCX pages cannot be rendered without Gotenberg
-        assert edoc_parser.get_page_count(path, EDOC_CONTAINER_MIME_TYPE) == 1
+        assert esig_parser.get_page_count(path, ESIG_CONTAINER_MIME_TYPE) == 1
 
     @override_settings(TIKA_ENDPOINT="http://tika:9998", TIKA_GOTENBERG_ENDPOINT="")
     def test_parse_bundle_prefers_tika_text(
         self,
         mocker,
-        edoc_parser: EdocDocumentParser,
+        esig_parser: ESigDocumentParser,
         tmp_path: Path,
     ) -> None:
         """Tika text wins over the local DOCX extraction when available."""
@@ -736,9 +736,9 @@ class TestEdocNestedContainers:
             return_value="Certificate text",
         )
 
-        edoc_parser.parse(path, EDOC_CONTAINER_MIME_TYPE)
+        esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
-        text = edoc_parser.get_text()
+        text = esig_parser.get_text()
         assert "Tika decision text" in text
         assert "Local fallback text" not in text
 
@@ -752,8 +752,8 @@ class TestEdocMetadata:
         **kwargs,
     ) -> list[MetadataEntry]:
         path = _write_container(tmp_path, **kwargs)
-        with EdocDocumentParser() as parser:
-            return parser.extract_metadata(path, EDOC_CONTAINER_MIME_TYPE)
+        with ESigDocumentParser() as parser:
+            return parser.extract_metadata(path, ESIG_CONTAINER_MIME_TYPE)
 
     def _entry(
         self,
@@ -768,20 +768,20 @@ class TestEdocMetadata:
 
     def test_metadata_archive_mime_returns_empty(self, tmp_path: Path) -> None:
         path = _write_container(tmp_path)
-        with EdocDocumentParser() as parser:
+        with ESigDocumentParser() as parser:
             assert parser.extract_metadata(path, "application/pdf") == []
 
     def test_metadata_plain_zip_returns_empty(self, tmp_path: Path) -> None:
         path = tmp_path / "plain.edoc"
         path.write_bytes(b"PK\x03\x04\x00\x00\x00\x00\x00\x00")
-        with EdocDocumentParser() as parser:
-            assert parser.extract_metadata(path, EDOC_CONTAINER_MIME_TYPE) == []
+        with ESigDocumentParser() as parser:
+            assert parser.extract_metadata(path, ESIG_CONTAINER_MIME_TYPE) == []
 
     def test_metadata_container_entries(self, tmp_path: Path) -> None:
         metadata = self._metadata(tmp_path)
 
         assert (
-            self._entry(metadata, "container", "mimetype") == EDOC_CONTAINER_MIME_TYPE
+            self._entry(metadata, "container", "mimetype") == ESIG_CONTAINER_MIME_TYPE
         )
         assert self._entry(metadata, "container", "document.pdf") == "application/pdf"
 
@@ -850,7 +850,7 @@ class TestEdocMetadata:
 
     def test_metadata_tampered_signed_properties(self, tmp_path: Path) -> None:
         """SigningTime changed after signing: SignedProperties digest mismatch."""
-        data = build_edoc_container()
+        data = build_esig_container()
         tampered_signature = (
             zipfile.ZipFile(io.BytesIO(data))
             .read("META-INF/signatures001.xml")
@@ -875,8 +875,8 @@ class TestEdocMetadata:
         path = tmp_path / "tampered.edoc"
         path.write_bytes(buffer.getvalue())
 
-        with EdocDocumentParser() as parser:
-            metadata = parser.extract_metadata(path, EDOC_CONTAINER_MIME_TYPE)
+        with ESigDocumentParser() as parser:
+            metadata = parser.extract_metadata(path, ESIG_CONTAINER_MIME_TYPE)
 
         assert self._entry(metadata, "signature", "signed_properties_valid") == "false"
         assert self._entry(metadata, "signature", "document_digest_valid") == "true"
@@ -943,7 +943,7 @@ class TestEdocMetadata:
 
     def test_metadata_finds_edoc_signatures_naming(self, tmp_path: Path) -> None:
         """Signature files named per the Latvian EDOC 2.0 spec are found."""
-        data = build_edoc_container(
+        data = build_esig_container(
             canonicalization="inclusive",
             key_type="ec",
             signature_file_name="META-INF/edoc-signatures-S1.xml",
@@ -962,6 +962,6 @@ class TestEdocMetadata:
 
 
 class TestEdocConfigure:
-    def test_configure_is_noop(self, edoc_parser: EdocDocumentParser) -> None:
-        edoc_parser.configure(ParserContext())
-        edoc_parser.configure(ParserContext(mailrule_id=1))
+    def test_configure_is_noop(self, esig_parser: ESigDocumentParser) -> None:
+        esig_parser.configure(ParserContext())
+        esig_parser.configure(ParserContext(mailrule_id=1))

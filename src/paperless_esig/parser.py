@@ -1,5 +1,5 @@
 """
-Third-party EDOC 2.0 / ETSI ASiC-E parser for Paperless-ngx.
+Third-party EU e-signature (ETSI ASiC-E) parser for Paperless-ngx.
 
 EDOC 2.0 is the Latvian electronic signature format specified by
 "EDOC Elektroniskā paraksta formāts 2.0".  It is a XAdES signature
@@ -19,11 +19,11 @@ the parser is format-agnostic and only verifies the container's
 *nested* containers ("EDOC within EDOC") whose outer container wraps
 documents plus an inner EDOC container that carries the actual PDF; the
 parser descends into nested containers to reach the PDF (see
-:meth:`EdocDocumentParser._extract_inner_pdf`).  Every document inside a
+:meth:`ESigDocumentParser._extract_inner_pdf`).  Every document inside a
 container is ingested: the inner PDFs are merged with the office
 documents (DOCX, ODT, ...) converted via Gotenberg into a single
 rendition PDF, and the text of every document is combined for search
-(see :meth:`EdocDocumentParser.parse`).
+(see :meth:`ESigDocumentParser.parse`).
 
 Detection
 ---------
@@ -31,8 +31,8 @@ libmagic does not recognise ASiC containers, so ``python-magic`` reports
 ``application/zip`` for these files.  Since a third-party parser can
 only declare the MIME type libmagic actually reports, this parser
 declares ``application/zip`` and uses content inspection (the
-container's ``mimetype`` entry, see :func:`is_edoc_container`) in
-:meth:`EdocDocumentParser.score` to only claim actual ASiC-E containers.
+container's ``mimetype`` entry, see :func:`is_esig_container`) in
+:meth:`ESigDocumentParser.score` to only claim actual ASiC-E containers.
 Consequences:
 
 * documents are stored with ``document.mime_type == "application/zip"``;
@@ -45,7 +45,7 @@ rendition (the frontend cannot display ZIP containers natively), keeps
 the original container as the source file, extracts the PDF text for
 search and exposes the XAdES signature metadata — signer, signing time,
 certificate chain, timestamps and cryptographic verification results —
-through :meth:`EdocDocumentParser.extract_metadata`.
+through :meth:`ESigDocumentParser.extract_metadata`.
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ from typing import TYPE_CHECKING, Self
 from django.conf import settings
 from documents.parsers import ParseError, make_thumbnail_from_pdf
 
-from paperless_edoc import __version__
+from paperless_esig import __version__
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -76,17 +76,17 @@ if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric import ec
     from paperless.parsers import MetadataEntry, ParserContext
 
-logger = logging.getLogger("paperless_edoc")
+logger = logging.getLogger("paperless_esig")
 
 #: The official media type of an ETSI ASiC-E container, as stored in the
 #: ``mimetype`` entry of every EDOC 2.0 file.
-EDOC_CONTAINER_MIME_TYPE: str = "application/vnd.etsi.asic-e+zip"
+ESIG_CONTAINER_MIME_TYPE: str = "application/vnd.etsi.asic-e+zip"
 
 #: File extensions that are recognised as ASiC-E containers even though
 #: libmagic reports them as ``application/zip``.  ``.asice`` is the
 #: standard ETSI extension; ``.edoc`` is the Latvian one, ``.bdoc`` the
 #: Estonian one and ``.adoc`` the Lithuanian one.
-_EDOC_FILE_EXTENSIONS: tuple[str, ...] = (".edoc", ".asice", ".bdoc", ".adoc")
+_ESIG_FILE_EXTENSIONS: tuple[str, ...] = (".edoc", ".asice", ".bdoc", ".adoc")
 
 #: libmagic reports ASiC containers as ``application/zip``; a third-party
 #: parser cannot influence detection, so this is the MIME type this
@@ -97,16 +97,16 @@ _EDOC_FILE_EXTENSIONS: tuple[str, ...] = (".edoc", ".asice", ".bdoc", ".adoc")
 #: consumption-directory filter.
 _SUPPORTED_MIME_TYPES: dict[str, str] = {
     "application/zip": ".edoc",
-    EDOC_CONTAINER_MIME_TYPE: ".asice",
+    ESIG_CONTAINER_MIME_TYPE: ".asice",
 }
 
 # Register the member-state extensions so that
 # get_supported_file_extensions() (and thus the consumption-directory
 # filter) accepts them and stored files keep a sensible extension.
-mimetypes.add_type(EDOC_CONTAINER_MIME_TYPE, ".edoc")
-mimetypes.add_type(EDOC_CONTAINER_MIME_TYPE, ".asice")
-mimetypes.add_type(EDOC_CONTAINER_MIME_TYPE, ".bdoc")
-mimetypes.add_type(EDOC_CONTAINER_MIME_TYPE, ".adoc")
+mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".edoc")
+mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".asice")
+mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".bdoc")
+mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".adoc")
 
 # XML namespaces used inside XAdES signature files and the ODF manifest.
 _XMLDSIG_NS: str = "http://www.w3.org/2000/09/xmldsig#"
@@ -171,7 +171,7 @@ _OFFICE_OPENXML_FRAGMENTS: tuple[str, ...] = (
 )
 
 
-def is_edoc_container(source: Path | bytes) -> bool:
+def is_esig_container(source: Path | bytes) -> bool:
     """Return True if *source* is an EDOC 2.0 (ASiC-E) container.
 
     *source* may be a filesystem path or the raw file contents.  The
@@ -208,7 +208,7 @@ def is_edoc_container(source: Path | bytes) -> bool:
         # RuntimeError covers encrypted containers, which ASiC-E explicitly
         # permits ("File ... is encrypted, password required for extraction").
         return False
-    return mimetype == EDOC_CONTAINER_MIME_TYPE
+    return mimetype == ESIG_CONTAINER_MIME_TYPE
 
 
 def extract_signer_name(source: Path | bytes) -> str | None:
@@ -231,18 +231,18 @@ def extract_signer_name(source: Path | bytes) -> str | None:
     str | None
         The signer's organization or common name, or None.
     """
-    if not is_edoc_container(source):
+    if not is_esig_container(source):
         return None
     try:
         with (
-            EdocDocumentParser() as parser,
+            ESigDocumentParser() as parser,
             zipfile.ZipFile(
                 io.BytesIO(source)
                 if isinstance(source, (bytes, bytearray))
                 else Path(source),
             ) as archive,
         ):
-            signature_name = EdocDocumentParser._find_signature_file(
+            signature_name = ESigDocumentParser._find_signature_file(
                 archive,
                 Path("container"),
             )
@@ -392,7 +392,7 @@ def _find_embedded_certificates(der: bytes) -> list:
     return found
 
 
-class EdocDocumentParser:
+class ESigDocumentParser:
     """Parse EDOC 2.0 (ASiC-E) signed containers for Paperless-ngx.
 
     The signed PDF inside the container is extracted and used as the
@@ -415,10 +415,10 @@ class EdocDocumentParser:
         Issue tracker / source URL.
     """
 
-    name: str = "Paperless-ngx EDOC Parser"
+    name: str = "Paperless-ngx ESig Parser"
     version: str = __version__
     author: str = "Exerra"
-    url: str = "https://github.com/Exerra/paperless-ngx-edoc"
+    url: str = "https://github.com/Exerra/paperless-esig"
 
     # ------------------------------------------------------------------
     # Class methods
@@ -446,7 +446,7 @@ class EdocDocumentParser:
 
         The MIME type is ``application/zip`` for every ZIP archive, so
         the file's actual content decides: when *path* is available the
-        container's ``mimetype`` entry is inspected (:func:`is_edoc_container`).
+        container's ``mimetype`` entry is inspected (:func:`is_esig_container`).
         When no path is given (the API/mail validation paths call this
         with ``filename=""``), the filename extension is the only signal
         and any ``application/zip`` file is accepted so that ASiC-E
@@ -471,7 +471,7 @@ class EdocDocumentParser:
         if mime_type not in _SUPPORTED_MIME_TYPES:
             return None
         if path is not None:
-            return 10 if is_edoc_container(path) else None
+            return 10 if is_esig_container(path) else None
         return 10
 
     # ------------------------------------------------------------------
@@ -821,11 +821,11 @@ class EdocDocumentParser:
             raise ParseError(
                 f"{path}: not an EDOC 2.0 container: missing 'mimetype' entry",
             )
-        if mimetype != EDOC_CONTAINER_MIME_TYPE:
+        if mimetype != ESIG_CONTAINER_MIME_TYPE:
             raise ParseError(
                 f"{path}: not an EDOC 2.0 container: "
                 f"'mimetype' entry is {mimetype!r}, expected "
-                f"{EDOC_CONTAINER_MIME_TYPE!r}",
+                f"{ESIG_CONTAINER_MIME_TYPE!r}",
             )
 
     @staticmethod
@@ -862,7 +862,7 @@ class EdocDocumentParser:
         one or more inner containers that carry the actual PDFs.
         """
         try:
-            return is_edoc_container(archive.read(name))
+            return is_esig_container(archive.read(name))
         except Exception:  # pragma: no cover
             return False
 
@@ -1867,7 +1867,7 @@ class EdocDocumentParser:
             canonicalized = etree.tostring(
                 target,
                 method="c14n",
-                exclusive=EdocDocumentParser._canonicalization_exclusive(
+                exclusive=ESigDocumentParser._canonicalization_exclusive(
                     signed_info,
                 ),
                 with_comments=False,
@@ -1938,7 +1938,7 @@ class EdocDocumentParser:
             canonicalized = etree.tostring(
                 signed_info,
                 method="c14n",
-                exclusive=EdocDocumentParser._canonicalization_exclusive(
+                exclusive=ESigDocumentParser._canonicalization_exclusive(
                     signed_info,
                 ),
                 with_comments=False,
@@ -1962,7 +1962,7 @@ class EdocDocumentParser:
                 ec.EllipticCurvePublicKey,
             ):
                 public_key.verify(
-                    EdocDocumentParser._normalize_ecdsa_signature(
+                    ESigDocumentParser._normalize_ecdsa_signature(
                         signature_bytes,
                         public_key,
                     ),
@@ -2011,4 +2011,4 @@ class EdocDocumentParser:
 # Imported for its side effect: connecting the signer-as-correspondent
 # handler to the document_consumption_finished signal when this module is
 # loaded (which happens at parser entrypoint discovery).
-from paperless_edoc import correspondent  # noqa: E402, F401
+from paperless_esig import correspondent  # noqa: E402, F401

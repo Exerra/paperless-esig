@@ -1,5 +1,5 @@
 """
-Tests for paperless_edoc.correspondent (signer-as-correspondent).
+Tests for paperless_esig.correspondent (signer-as-correspondent).
 
 The handler is exercised with mocked model/backend loaders since the
 package's minimal Django settings do not register the ``documents`` app.
@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
-from edoc_fixtures import build_edoc_container
-from paperless_edoc.correspondent import _on_document_consumption_finished
-from paperless_edoc.parser import extract_signer_name
+from esig_fixtures import build_esig_container
+from paperless_esig.correspondent import _on_document_consumption_finished
+from paperless_esig.parser import extract_signer_name
 
 if TYPE_CHECKING:
     import pytest
@@ -39,7 +39,7 @@ class TestExtractSignerName:
     """Signer extraction from real synthetic containers."""
 
     def test_returns_organization_over_cn(self) -> None:
-        container = build_edoc_container(
+        container = build_esig_container(
             signer_cn="111111-11111",
             signer_org="Latvijas Testa Uzņēmums",
             signer_country="LV",
@@ -47,7 +47,7 @@ class TestExtractSignerName:
         assert extract_signer_name(container) == "Latvijas Testa Uzņēmums"
 
     def test_returns_cn_when_no_organization(self) -> None:
-        container = build_edoc_container(
+        container = build_esig_container(
             signer_cn="Jānis Bērziņš",
             signer_org=None,
             signer_country="LV",
@@ -55,7 +55,7 @@ class TestExtractSignerName:
         assert extract_signer_name(container) == "Jānis Bērziņš"
 
     def test_placeholder_cn_returns_none(self) -> None:
-        container = build_edoc_container(
+        container = build_esig_container(
             signer_cn="Private",
             signer_org=None,
             signer_country="LV",
@@ -73,7 +73,7 @@ class TestExtractSignerName:
     def test_path_based_extraction(self, tmp_path: Path) -> None:
         path = tmp_path / "document.edoc"
         path.write_bytes(
-            build_edoc_container(signer_cn="Test Signer", signer_org="Org"),
+            build_esig_container(signer_cn="Test Signer", signer_org="Org"),
         )
         assert extract_signer_name(path) == "Org"
 
@@ -85,14 +85,14 @@ class TestSignerAsCorrespondentHandler:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("PAPERLESS_EDOC_ASSIGN_SIGNER_AS_CORRESPONDENT", "no")
+        monkeypatch.setenv("PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT", "no")
         document = _document_stub()
         with (
             mock.patch(
-                "paperless_edoc.parser.extract_signer_name",
+                "paperless_esig.parser.extract_signer_name",
             ) as extract,
             mock.patch(
-                "paperless_edoc.correspondent._load_correspondent_model"
+                "paperless_esig.correspondent._load_correspondent_model"
             ) as load,
         ):
             _on_document_consumption_finished(
@@ -106,7 +106,7 @@ class TestSignerAsCorrespondentHandler:
     def test_skips_when_correspondent_already_assigned(self) -> None:
         document = _document_stub(correspondent_id=5)
         with mock.patch(
-            "paperless_edoc.parser.extract_signer_name",
+            "paperless_esig.parser.extract_signer_name",
         ) as extract:
             _on_document_consumption_finished(
                 sender=object(),
@@ -118,7 +118,7 @@ class TestSignerAsCorrespondentHandler:
     def test_skips_non_zip_mime_types(self) -> None:
         document = _document_stub(mime_type="application/pdf")
         with mock.patch(
-            "paperless_edoc.parser.extract_signer_name",
+            "paperless_esig.parser.extract_signer_name",
         ) as extract:
             _on_document_consumption_finished(
                 sender=object(),
@@ -130,7 +130,7 @@ class TestSignerAsCorrespondentHandler:
     def test_skips_without_original_file(self) -> None:
         document = _document_stub()
         with mock.patch(
-            "paperless_edoc.parser.extract_signer_name",
+            "paperless_esig.parser.extract_signer_name",
         ) as extract:
             _on_document_consumption_finished(sender=object(), document=document)
         extract.assert_not_called()
@@ -139,11 +139,11 @@ class TestSignerAsCorrespondentHandler:
         document = _document_stub()
         with (
             mock.patch(
-                "paperless_edoc.parser.extract_signer_name",
+                "paperless_esig.parser.extract_signer_name",
                 return_value=None,
             ),
             mock.patch(
-                "paperless_edoc.correspondent._load_correspondent_model"
+                "paperless_esig.correspondent._load_correspondent_model"
             ) as load,
         ):
             _on_document_consumption_finished(
@@ -166,19 +166,19 @@ class TestSignerAsCorrespondentHandler:
 
         with (
             mock.patch(
-                "paperless_edoc.parser.extract_signer_name",
+                "paperless_esig.parser.extract_signer_name",
                 return_value="Test Organization",
             ),
             mock.patch(
-                "paperless_edoc.correspondent._load_correspondent_model",
+                "paperless_esig.correspondent._load_correspondent_model",
                 return_value=correspondent_model,
             ),
             mock.patch(
-                "paperless_edoc.correspondent._load_document_model",
+                "paperless_esig.correspondent._load_document_model",
                 return_value=document_model,
             ),
             mock.patch(
-                "paperless_edoc.correspondent._search_backend",
+                "paperless_esig.correspondent._search_backend",
                 return_value=backend,
             ),
         ):
@@ -217,19 +217,19 @@ class TestSignerAsCorrespondentHandler:
 
         with (
             mock.patch(
-                "paperless_edoc.parser.extract_signer_name",
+                "paperless_esig.parser.extract_signer_name",
                 return_value="New Signer",
             ),
             mock.patch(
-                "paperless_edoc.correspondent._load_correspondent_model",
+                "paperless_esig.correspondent._load_correspondent_model",
                 return_value=correspondent_model,
             ),
             mock.patch(
-                "paperless_edoc.correspondent._load_document_model",
+                "paperless_esig.correspondent._load_document_model",
                 return_value=document_model,
             ),
             mock.patch(
-                "paperless_edoc.correspondent._search_backend",
+                "paperless_esig.correspondent._search_backend",
                 return_value=backend,
             ),
         ):
@@ -252,11 +252,11 @@ class TestSignerAsCorrespondentHandler:
         document = _document_stub()
         with (
             mock.patch(
-                "paperless_edoc.parser.extract_signer_name",
+                "paperless_esig.parser.extract_signer_name",
                 return_value="Test Organization",
             ),
             mock.patch(
-                "paperless_edoc.correspondent._load_correspondent_model",
+                "paperless_esig.correspondent._load_correspondent_model",
                 side_effect=RuntimeError("boom"),
             ),
         ):

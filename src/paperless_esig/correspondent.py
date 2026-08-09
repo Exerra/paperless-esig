@@ -14,7 +14,7 @@ and the path of the consumed file *before* the files are moved to their
 final location.  The handler therefore
 
 * reads the signer from the original container (via
-  :func:`paperless_edoc.parser.extract_signer_name`),
+  :func:`paperless_esig.parser.extract_signer_name`),
 * updates the database row directly (``QuerySet.update``) so that the
   ``post_save`` filename handlers do not run while the files are not in
   place yet, and sets the in-memory attribute on the document so the
@@ -33,7 +33,7 @@ Known limitations:
   when a correspondent is created server-side.
 
 The feature can be disabled with
-``PAPERLESS_EDOC_ASSIGN_SIGNER_AS_CORRESPONDENT=false`` (default: on).
+``PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT=false`` (default: on).
 """
 
 from __future__ import annotations
@@ -45,13 +45,13 @@ from typing import Any
 
 from documents.signals import document_consumption_finished
 
-logger = logging.getLogger("paperless_edoc.correspondent")
+logger = logging.getLogger("paperless_esig.correspondent")
 
 
 def _assign_signer_as_correspondent_enabled() -> bool:
     """Return whether signer-as-correspondent assignment is enabled."""
     return os.getenv(
-        "PAPERLESS_EDOC_ASSIGN_SIGNER_AS_CORRESPONDENT", "yes"
+        "PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT", "yes"
     ).strip().lower() in (
         "1",
         "true",
@@ -102,7 +102,7 @@ def _on_document_consumption_finished(
     # Imported lazily: this module is imported from parser.py (which is
     # loaded at entrypoint discovery), so a module-level import would
     # create a circular import.
-    from paperless_edoc.parser import extract_signer_name
+    from paperless_esig.parser import extract_signer_name
 
     signer_name = extract_signer_name(Path(original_file))
     if not signer_name:
@@ -153,5 +153,5 @@ def _on_document_consumption_finished(
 
 document_consumption_finished.connect(
     _on_document_consumption_finished,
-    dispatch_uid="paperless_edoc.signer_as_correspondent",
+    dispatch_uid="paperless_esig.signer_as_correspondent",
 )
