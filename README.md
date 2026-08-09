@@ -1,5 +1,7 @@
 # paperless-esig
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=dark"><img alt="badge" src="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=light"></picture>
+
 Third-party parser for Paperless-ngx that adds support for **EU
 electronically signed documents** — ETSI ASiC-E containers as used under
 the eIDAS regulation:
