@@ -211,6 +211,50 @@ def is_edoc_container(source: Path | bytes) -> bool:
     return mimetype == EDOC_CONTAINER_MIME_TYPE
 
 
+def extract_signer_name(source: Path | bytes) -> str | None:
+    """Return the signer name of the first signature, or None.
+
+    *source* may be a filesystem path or the raw file contents.  The
+    signer's organization is preferred over the certificate common name
+    (Latvian individual certificates embed a personal code in the CN),
+    and placeholder common names ("Private", "Privātpersona") are not
+    usable as a name.  Best effort — any failure is logged and None is
+    returned so that callers never crash because of it.
+
+    Parameters
+    ----------
+    source:
+        Path to the container, or the file contents as bytes.
+
+    Returns
+    -------
+    str | None
+        The signer's organization or common name, or None.
+    """
+    if not is_edoc_container(source):
+        return None
+    try:
+        with (
+            EdocDocumentParser() as parser,
+            zipfile.ZipFile(
+                io.BytesIO(source)
+                if isinstance(source, (bytes, bytearray))
+                else Path(source),
+            ) as archive,
+        ):
+            signature_name = EdocDocumentParser._find_signature_file(
+                archive,
+                Path("container"),
+            )
+            return parser._signer_certificate_name(archive, signature_name)
+    except Exception:
+        logger.warning(
+            "Could not extract signer name from container",
+            exc_info=True,
+        )
+        return None
+
+
 def _as_text(value: bytes | str) -> str:
     """Coerce a certificate name attribute value to text.
 
@@ -1962,3 +2006,9 @@ class EdocDocumentParser:
             s = int.from_bytes(signature[component_size:], "big")
             return encode_dss_signature(r, s)
         return signature
+
+
+# Imported for its side effect: connecting the signer-as-correspondent
+# handler to the document_consumption_finished signal when this module is
+# loaded (which happens at parser entrypoint discovery).
+from paperless_edoc import correspondent  # noqa: E402, F401

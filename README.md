@@ -30,6 +30,16 @@ rejected.
 - Handles nested containers ("EDOC within EDOC", as produced by the Latvian
   e-archive) and multi-document containers (multiple PDFs and office
   documents merged into a single rendition)
+- **Assigns the signer as the document's correspondent**: after
+  consumption, if no correspondent was determined by content matching or
+  workflow rules, the XAdES signer (organisation preferred over common
+  name) is looked up case-insensitively and created if it does not exist,
+  and the document is re-indexed so the correspondent is searchable
+  immediately. Disable with `PAPERLESS_EDOC_ASSIGN_SIGNER_AS_CORRESPONDENT=false`
+  (default: enabled). Known limitations: the assignment is not recorded in
+  the audit log, and the UI may show the new correspondent as "Private"
+  until the page is reloaded (the frontend's name-list caches are not
+  invalidated when a correspondent is created server-side).
 
 ## Installation
 

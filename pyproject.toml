@@ -1,6 +1,6 @@
 [project]
 name = "paperless-edoc"
-version = "0.1.0"
+version = "0.2.0"
 description = "Third-party parser for ETSI ASiC-E signed documents (EU e-signed docs: .edoc, .asice, .bdoc, .adoc) for Paperless-ngx"
 readme = "README.md"
 requires-python = ">=3.11"
