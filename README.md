@@ -169,50 +169,6 @@ uv build
 Artifacts land in `dist/` as `paperless_esig-<version>-py3-none-any.whl`
 and `paperless_esig-<version>.tar.gz`.
 
-## Publishing to PyPI
-
-Do this once per release (after bumping `version` in `pyproject.toml`).
-
-### 1. Get an API token
-
-1. Create an account at <https://pypi.org> (and <https://test.pypi.org>).
-2. PyPI → Account settings → **API tokens** → *Add API token*.
-   Scope it to the `paperless-esig` project (or your whole account while
-   you're still testing).
-3. `uv publish` will ask for the token the first time and store it in your
-   keyring.
-
-### 2. Upload to TestPyPI first (optional but recommended)
-
-```sh
-uv publish --publish-url https://test.pypi.org/legacy/
-#    or just:  make publish-test
-```
-
-Verify it installs:
-
-```sh
-uv venv /tmp/test-esig --python 3.11
-uv pip install --python /tmp/test-esig/bin/python --index-url https://test.pypi.org/simple paperless-esig
-/tmp/test-esig/bin/python -c "import paperless_esig; print(paperless_esig.__version__)"
-```
-
-### 3. Upload to PyPI
-
-```sh
-uv publish
-#    or just:  make publish
-```
-
-### 4. Verify the release
-
-```sh
-uv pip install paperless-esig
-```
-
-and confirm the parser shows up in the Paperless-ngx logs as described in
-[Verify the install](#verify-the-install).
-
 ## Makefile cheat sheet
 
 | Command                    | What it does                                        |
@@ -223,8 +179,6 @@ and confirm the parser shows up in the Paperless-ngx logs as described in
 | `make build`               | Build wheel + sdist into `dist/`                    |
 | `make docker`              | Build the image from the latest PyPI release        |
 | `make docker-local`        | Build the image from your local checkout            |
-| `make publish-test`        | Build + upload to TestPyPI                          |
-| `make publish`             | Build + upload to PyPI                              |
 | `make clean`               | Remove build artifacts and caches                   |
 
 ## Troubleshooting
