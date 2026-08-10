@@ -55,7 +55,7 @@ You need a working Paperless-ngx installation. Two ways to add the parser:
 
 ### Option A: Docker (recommended)
 
-Build the image (or see [Building the Docker image](#building-the-docker-image)
+Clone the repo and build the image (or see [Building the Docker image](#building-the-docker-image)
 for all options):
 
 ```sh
