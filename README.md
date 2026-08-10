@@ -3,13 +3,13 @@
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=dark"><img alt="badge" src="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=light"></picture>
 
 Third-party parser for Paperless-ngx that adds support for **EU
-electronically signed documents** — ETSI ASiC-E containers as used under
+electronically signed documents** -- ETSI ASiC-E containers as used under
 the eIDAS regulation:
 
-- `.edoc` — Latvia (EDOC 2.0)
-- `.asice` — Estonia
-- `.bdoc` — Estonia
-- `.adoc` — Lithuania
+- `.edoc` - Latvia (EDOC 2.0)
+- `.asice` - Estonia
+- `.bdoc` - Estonia
+- `.adoc` - Lithuania
 
 These files bundle the signed document (usually a PDF), an electronic
 signature, and a manifest inside a ZIP container. Paperless-ngx cannot
@@ -48,6 +48,7 @@ and they are rejected.
 Currently **XAdES** signatures are parsed and verified. Support for
 **CAdES** (and other signature types found in the wild) is planned.
 
+If you want to help bring CAdES support and don't mind exposing your full name to me, please sign a PDF of your choosing and send it to me. My email is in my [profile](https://github.com/Exerra). After implementation a fake CAdES document generator will be written to avoid storing real documents, just like with the existing XAdES tests. 
 ## Quick start
 
 You need a working Paperless-ngx installation. Two ways to add the parser:
