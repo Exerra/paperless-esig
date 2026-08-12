@@ -98,6 +98,48 @@ class TestParseCms:
         )
         assert document.signers[0].signing_time is None
 
+    def test_no_signed_attributes(self) -> None:
+        # A signer without signed attributes signs the raw content.
+        key, cert, _ = build_signer()
+        content = b"the signed content"
+        document = esig_cms.parse_cms(
+            build_cms(
+                content,
+                key=key,
+                certificate=cert,
+                with_signed_attributes=False,
+            ),
+        )
+        signer = document.signers[0]
+        assert signer.signed_attributes_der is None
+        assert signer.message_digest is None
+        assert signer.signing_time is None
+        assert esig_cms.verify_signature(signer, content) is True
+        assert esig_cms.verify_message_digest(signer, content) is None
+
+    def test_unsigned_timestamp_and_ocsp_flags(self) -> None:
+        key, cert, _ = build_signer()
+        document = esig_cms.parse_cms(
+            build_cms(
+                b"content",
+                key=key,
+                certificate=cert,
+                with_timestamp=True,
+                with_ocsp=True,
+            ),
+        )
+        signer = document.signers[0]
+        assert signer.timestamp_present is True
+        assert signer.ocsp_present is True
+
+    def test_unsigned_attributes_absent_by_default(self) -> None:
+        key, cert, _ = build_signer()
+        signer = esig_cms.parse_cms(
+            build_cms(b"content", key=key, certificate=cert),
+        ).signers[0]
+        assert signer.timestamp_present is False
+        assert signer.ocsp_present is False
+
     def test_ber_encoding_parses(self) -> None:
         key, cert, _ = build_signer()
         blob = to_ber_indefinite(build_cms(b"content", key=key, certificate=cert))
@@ -161,6 +203,16 @@ class TestVerification:
         ).signers[0]
         assert esig_cms.verify_signature(signer, content) is True
 
+    def test_pss_signature_value_valid(self) -> None:
+        key, cert, _ = build_signer()
+        content = b"the signed content"
+        signer = esig_cms.parse_cms(
+            build_cms(content, key=key, certificate=cert, pss=True),
+        ).signers[0]
+        assert signer.signature_algorithm == "rsassa_pss"
+        assert signer.signature_hash == "sha256"
+        assert esig_cms.verify_signature(signer, content) is True
+
     def test_ber_signature_value_valid(self) -> None:
         key, cert, _ = build_signer()
         content = b"the signed content"
@@ -187,6 +239,24 @@ class TestSignerCertificateResolution:
             ),
         )
         assert document.signers[0].certificate.serial_number == 42
+
+    def test_ski_sid_resolution(self) -> None:
+        key, cert, _ = build_signer(common_name="Ski Signer", serial=7, add_ski=True)
+        _, filler, _ = build_signer(
+            common_name="Filler",
+            serial=8,
+            add_ski=True,
+        )
+        document = esig_cms.parse_cms(
+            build_cms(
+                b"x",
+                key=key,
+                certificate=cert,
+                include_certificates=[cert, filler],
+                sid_ski=True,
+            ),
+        )
+        assert document.signers[0].certificate.serial_number == 7
 
     def test_signing_certificate_v2_resolution(self) -> None:
         # The sid does not match the embedded signer certificate (the
@@ -325,3 +395,23 @@ class TestPadesExtraction:
         # it must be deduplicated.
         pdf = self._signed_pdf()
         assert len(esig_pades.find_pdf_signatures(pdf)) == 1
+
+    def test_byte_scan_fallback_when_pikepdf_fails(
+        self,
+        mocker,
+    ) -> None:
+        pdf = self._signed_pdf()
+        mocker.patch(
+            "pikepdf.open",
+            side_effect=RuntimeError("pdf broken"),
+        )
+        signatures = esig_pades.find_pdf_signatures(pdf)
+        assert len(signatures) == 1
+        signature = signatures[0]
+        assert len(signature.byte_range) == 4
+        assert signature.subfilter == "ETSI.CAdES.detached"
+        covered = esig_pades.covered_bytes(pdf, signature.byte_range)
+        document = esig_cms.parse_cms(signature.contents)
+        assert esig_cms.verify_message_digest(document.signers[0], covered) is True
+        assert esig_cms.verify_signature(document.signers[0], covered) is True
+        assert esig_pades.is_pades_pdf(pdf) is True

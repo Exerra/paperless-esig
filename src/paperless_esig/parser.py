@@ -97,6 +97,8 @@ if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric import ec
     from paperless.parsers import MetadataEntry, ParserContext
 
+    from paperless_esig.cms import CmsDocument
+
 logger = logging.getLogger("paperless_esig")
 
 #: The official media type of an ETSI ASiC-E container, as stored in the
@@ -310,24 +312,20 @@ def extract_signer_name(source: Path | bytes) -> str | None:
         The signer's organization or common name, or None.
     """
     try:
-        if is_cades(source):
-            from paperless_esig import cms as esig_cms
+        data = (
+            source
+            if isinstance(source, (bytes, bytearray))
+            else Path(source).read_bytes()
+        )
+        from paperless_esig import cms as esig_cms
+        from paperless_esig import pades as esig_pades
 
-            document = esig_cms.parse_cms(
-                source if isinstance(source, (bytes, bytearray)) else Path(source).read_bytes(),
-            )
+        if esig_cms.is_cades(data):
+            document = esig_cms.parse_cms(data)
             if document and document.signers:
                 return esig_cms.signer_certificate_name(document.signers[0])
             return None
-        if is_pades_pdf(source):
-            from paperless_esig import cms as esig_cms
-            from paperless_esig import pades as esig_pades
-
-            data = (
-                source
-                if isinstance(source, (bytes, bytearray))
-                else Path(source).read_bytes()
-            )
+        if esig_pades.is_pades_pdf(data):
             signatures = esig_pades.find_pdf_signatures(data)
             if not signatures:
                 return None
@@ -335,15 +333,11 @@ def extract_signer_name(source: Path | bytes) -> str | None:
             if document and document.signers:
                 return esig_cms.signer_certificate_name(document.signers[0])
             return None
-        if not is_esig_container(source):
+        if not is_esig_container(data):
             return None
         with (
             ESigDocumentParser() as parser,
-            zipfile.ZipFile(
-                io.BytesIO(source)
-                if isinstance(source, (bytes, bytearray))
-                else Path(source),
-            ) as archive,
+            zipfile.ZipFile(io.BytesIO(data)) as archive,
         ):
             signature_name = ESigDocumentParser._find_signature_file(
                 archive,
@@ -366,28 +360,6 @@ def _as_text(value: bytes | str) -> str:
     always JSON-serialisable strings.
     """
     return value.decode("utf-8") if isinstance(value, bytes) else value
-
-
-def _certificate_name_attributes(cert) -> tuple[str | None, str | None, str | None]:
-    """Return ``(common_name, organization, country)`` of a certificate subject.
-
-    Used both for the signature metadata tab and for resolving the signer
-    as a potential correspondent during consumption.
-    """
-    from cryptography.x509 import NameOID
-
-    def _name_attribute(oid) -> str | None:
-        try:
-            attributes = cert.subject.get_attributes_for_oid(oid)
-            return _as_text(attributes[0].value) if attributes else None
-        except Exception:  # pragma: no cover
-            return None
-
-    return (
-        _name_attribute(NameOID.COMMON_NAME),
-        _name_attribute(NameOID.ORGANIZATION_NAME),
-        _name_attribute(NameOID.COUNTRY_NAME),
-    )
 
 
 def _parse_xml_datetime(value: str) -> datetime.datetime | None:
@@ -460,15 +432,6 @@ def _parse_pdf_date(value: str) -> datetime.datetime | None:
         else:
             parsed -= offset
     return parsed
-
-
-#: Certificate common names that do not identify the signer.  Some
-#: eParaksts mobile signing certificates use a generic subject
-#: ("Private" / "Privātpersona") instead of the person's name, so the
-#: common name alone cannot serve as a correspondent name then.
-_PLACEHOLDER_CN_VALUES: frozenset[str] = frozenset(
-    {"private", "privātpersona"},
-)
 
 
 def _find_embedded_certificates(der: bytes) -> list:
@@ -612,10 +575,16 @@ class ESigDocumentParser:
         if path is not None:
             if mime_type == "application/pdf":
                 return 10 if is_pades_pdf(path) else None
-            if mime_type == "application/octet-stream":
-                return 10 if is_cades(path) else None
             if mime_type == "application/zip":
                 return 10 if is_esig_container(path) else None
+            if mime_type in {
+                "application/octet-stream",
+                "application/pkcs7-mime",
+                "application/x-pkcs7-mime",
+                "application/pkcs7-signature",
+                "application/x-pkcs7-signature",
+            }:
+                return 10 if is_cades(path) else None
             return 10
         if mime_type == "application/pdf":
             return None
@@ -643,7 +612,7 @@ class ESigDocumentParser:
         Returns
         -------
         bool
-            Always False — the EDOC parser produces a display PDF
+            Always False — the parser produces a display PDF
             (requires_pdf_rendition=True), not an optional OCR archive.
         """
         return False
@@ -655,9 +624,9 @@ class ESigDocumentParser:
         Returns
         -------
         bool
-            Always True — EDOC containers (ZIP archives) cannot be
-            rendered natively in a browser, so the inner PDF is always
-            extracted for display.
+            Always True — signed documents either cannot be displayed
+            natively (ZIP containers, CAdES signatures) or are PDFs
+            whose signature must be preserved in the rendition.
         """
         return True
 
@@ -908,8 +877,9 @@ class ESigDocumentParser:
         Returns
         -------
         datetime.datetime | None
-            The XAdES signing time (falling back to the inner PDF's
-            creation date), or None if neither could be determined.
+            The signature signing time (with format-specific fallbacks
+            to the PAdES ``/M`` field and the PDF creation date), or
+            None if none could be determined.
         """
         return self._date
 
@@ -928,8 +898,9 @@ class ESigDocumentParser:
         """Return a name for the signer of the first signature, or None.
 
         The signer's organization is preferred over the certificate
-        common name, since Latvian individual certificates embed a
-        personal code in the CN.
+        common name; placeholder common names and personal-code CNs are
+        not usable as a name (see
+        :func:`paperless_esig.cms.signer_name_from_certificate`).
 
         Returns
         -------
@@ -1133,14 +1104,13 @@ class ESigDocumentParser:
 
     def _append_cms_metadata(
         self,
-        document: object,
+        document: CmsDocument,
         content: bytes | None,
         result: list[MetadataEntry],
     ) -> None:
         """Append CMS signature metadata and verification results.
 
-        *document* is a :class:`paperless_esig.cms.CmsDocument`; the
-        signature of the first signer is detailed and the remaining
+        The signature of the first signer is detailed and the remaining
         signers contribute to the count.
         """
         from paperless_esig import cms as esig_cms
@@ -1734,18 +1704,21 @@ class ESigDocumentParser:
         archive: zipfile.ZipFile,
         signature_name: str,
     ) -> str | None:
-        """Return the signer's organization or common name, or None.
+        """Return the signer's name, or None.
 
         Resolves the signer certificate of the first signature (via
-        ``KeyInfo`` or the ``SigningCertificate`` digest) and prefers the
-        organization attribute over the common name, mirroring the
-        metadata exposed by ``_append_certificate_metadata``.  Placeholder
-        common names (e.g. "Private" on some eParaksts mobile certificates)
-        are not usable as a name.  Best effort — any failure is logged and
-        None is returned so that parsing itself never fails because of it.
+        ``KeyInfo`` or the ``SigningCertificate`` digest) and applies
+        the same name resolution used for CAdES/PAdES signatures (see
+        :func:`paperless_esig.cms.signer_name_from_certificate`):
+        organization preferred over common name, placeholder common
+        names and personal-code CNs not usable as a name.  Best effort —
+        any failure is logged and None is returned so that parsing
+        itself never fails because of it.
         """
         try:
             from lxml import etree
+
+            from paperless_esig import cms as esig_cms
 
             root = etree.fromstring(archive.read(signature_name))
             signatures = root.findall(f"{{{_XMLDSIG_NS}}}Signature")
@@ -1762,15 +1735,7 @@ class ESigDocumentParser:
             from cryptography import x509
 
             cert = x509.load_der_x509_certificate(base64.b64decode(signer_cert))
-            common_name, organization, _ = _certificate_name_attributes(cert)
-            if organization:
-                return organization
-            if (
-                common_name
-                and common_name.strip().lower() not in _PLACEHOLDER_CN_VALUES
-            ):
-                return common_name
-            return None
+            return esig_cms.signer_name_from_certificate(cert)
         except Exception as err:
             logger.warning("Could not resolve signer name: %s", err)
             return None
@@ -1965,12 +1930,16 @@ class ESigDocumentParser:
             from cryptography import x509
             from cryptography.x509 import NameOID
 
+            from paperless_esig import cms as esig_cms
+
             cert = x509.load_der_x509_certificate(base64.b64decode(cert_der_b64))
         except Exception as err:  # pragma: no cover
             logger.warning("Could not parse signer certificate: %s", err)
             return
 
-        common_name, organization, country = _certificate_name_attributes(cert)
+        common_name, organization, country = esig_cms.certificate_name_attributes(
+            cert,
+        )
 
         if common_name:
             result.append(

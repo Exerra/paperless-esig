@@ -16,7 +16,8 @@ Two signature profiles are supported, mirroring the real-world producers:
 
 The cryptographic structure mirrors what real CAdES/PAdES files look
 like — the parsing code is verified against the real-world samples
-manually (see the README development notes).
+(Italian CIE, Uruguayan TuID and Brazilian ICP-Brasil files) during
+development.
 """
 
 from __future__ import annotations
@@ -76,8 +77,15 @@ def build_signer(
     surname: str | None = None,
     serial: int = 12345,
     curve: str = "rsa",
+    add_ski: bool = False,
 ) -> tuple[object, x509.Certificate, bytes]:
     """Create a signer key, certificate and DER for tests.
+
+    Parameters
+    ----------
+    add_ski:
+        Whether the certificate carries a subject key identifier
+        extension (needed for ``sid_ski`` signer identifiers).
 
     Returns
     -------
@@ -100,7 +108,7 @@ def build_signer(
         attributes.append(x509.NameAttribute(NameOID.SURNAME, surname))
     name = x509.Name(attributes)
 
-    certificate = (
+    builder = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
@@ -108,8 +116,13 @@ def build_signer(
         .serial_number(serial)
         .not_valid_before(datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC))
         .not_valid_after(datetime.datetime(2028, 1, 1, tzinfo=datetime.UTC))
-        .sign(key, hashes.SHA256())
     )
+    if add_ski:
+        builder = builder.add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+            critical=False,
+        )
+    certificate = builder.sign(key, hashes.SHA256())
     return key, certificate, certificate.public_bytes(serialization.Encoding.DER)
 
 
@@ -123,10 +136,22 @@ def _signed_attributes_der(signer_info: cms.SignerInfo) -> bytes:
     return b"\x31" + signer_info["signed_attrs"].dump()[1:]
 
 
-def _sign_with(key, data: bytes, curve: str) -> bytes:
+def _sign_with(
+    key,
+    data: bytes,
+    curve: str,
+    *,
+    pss: bool = False,
+) -> bytes:
     """Sign *data* with *key*, matching the fixture's algorithm profile."""
     if curve == "ecdsa":
         return key.sign(data, ec.ECDSA(hashes.SHA256()))
+    if pss:
+        return key.sign(
+            data,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
+            hashes.SHA256(),
+        )
     return key.sign(data, padding.PKCS1v15(), hashes.SHA256())
 
 
@@ -146,8 +171,13 @@ def build_cms(
     attached: bool = True,
     with_signing_time: bool = True,
     with_signing_certificate: bool = True,
+    with_signed_attributes: bool = True,
+    with_timestamp: bool = False,
+    with_ocsp: bool = False,
     signing_time: datetime.datetime = _DEFAULT_SIGNING_TIME,
     curve: str = "rsa",
+    pss: bool = False,
+    sid_ski: bool = False,
     signer_serial: int | None = None,
 ) -> bytes:
     """Build a DER-encoded CMS SignedData (CAdES) signature.
@@ -172,10 +202,26 @@ def build_cms(
         Whether the ``signingTime`` attribute is included.
     with_signing_certificate:
         Whether the ``signingCertificateV2`` attribute is included.
+    with_signed_attributes:
+        Whether the signer carries signed attributes at all (False
+        produces a plain signature over the raw content).
+    with_timestamp:
+        Whether an unsigned RFC 3161 timestamp token attribute is
+        included (the token itself is a placeholder).
+    with_ocsp:
+        Whether an unsigned OCSP response attribute is included (the
+        response itself is a placeholder).
     signing_time:
         The value of the ``signingTime`` attribute.
     curve:
         ``"rsa"`` or ``"ecdsa"`` — selects the signature algorithm.
+    pss:
+        Whether to use RSASSA-PSS (with SHA-256/MGF1/salt-32) instead
+        of PKCS#1 v1.5.  Only meaningful for RSA keys.
+    sid_ski:
+        Whether the signer identifier is a subject key identifier
+        (requires the certificate to carry a SKI extension) instead of
+        the issuer-and-serial-number form.
     signer_serial:
         Overrides the serial number in the signer identifier.
     """
@@ -183,61 +229,104 @@ def build_cms(
 
     attributes = cms.CMSAttributes()
 
-    content_type = cms.CMSAttribute()
-    content_type["type"] = _CONTENT_TYPE_OID
-    content_type["values"] = [cms.ContentType("data")]
-    attributes.append(content_type)
+    if with_signed_attributes:
+        content_type = cms.CMSAttribute()
+        content_type["type"] = _CONTENT_TYPE_OID
+        content_type["values"] = [cms.ContentType("data")]
+        attributes.append(content_type)
 
-    if with_signing_time:
-        signing_time_attr = cms.CMSAttribute()
-        signing_time_attr["type"] = _SIGNING_TIME_OID
-        signing_time_attr["values"] = [core.UTCTime(signing_time)]
-        attributes.append(signing_time_attr)
+        if with_signing_time:
+            signing_time_attr = cms.CMSAttribute()
+            signing_time_attr["type"] = _SIGNING_TIME_OID
+            signing_time_attr["values"] = [core.UTCTime(signing_time)]
+            attributes.append(signing_time_attr)
 
-    message_digest = cms.CMSAttribute()
-    message_digest["type"] = _MESSAGE_DIGEST_OID
-    message_digest["values"] = [core.OctetString(digest)]
-    attributes.append(message_digest)
+        message_digest = cms.CMSAttribute()
+        message_digest["type"] = _MESSAGE_DIGEST_OID
+        message_digest["values"] = [core.OctetString(digest)]
+        attributes.append(message_digest)
 
-    if with_signing_certificate:
-        ess = _SigningCertificateV2()
-        cert_id = _EssCertIdV2()
-        cert_id["cert_hash"] = hashlib.sha256(
-            certificate.public_bytes(serialization.Encoding.DER),
-        ).digest()
-        ess["certs"] = [cert_id]
-        ess_attr = cms.CMSAttribute()
-        ess_attr["type"] = _SIGNING_CERTIFICATE_V2_OID
-        ess_attr["values"] = [ess]
-        attributes.append(ess_attr)
+        if with_signing_certificate:
+            ess = _SigningCertificateV2()
+            cert_id = _EssCertIdV2()
+            cert_id["cert_hash"] = hashlib.sha256(
+                certificate.public_bytes(serialization.Encoding.DER),
+            ).digest()
+            ess["certs"] = [cert_id]
+            ess_attr = cms.CMSAttribute()
+            ess_attr["type"] = _SIGNING_CERTIFICATE_V2_OID
+            ess_attr["values"] = [ess]
+            attributes.append(ess_attr)
 
     signer_info = cms.SignerInfo()
     signer_info["version"] = "v1"
-    signer_identifier = cms.SignerIdentifier(
-        name="issuer_and_serial_number",
-        value={
-            "issuer": asn1_x509.Name.build(
-                {
-                    "common_name": _subject_common_name(certificate),
-                },
-            ),
-            "serial_number": signer_serial
-            if signer_serial is not None
-            else certificate.serial_number,
-        },
-    )
+    if sid_ski:
+        from cryptography.x509 import ExtensionOID
+
+        ski = certificate.extensions.get_extension_for_oid(
+            ExtensionOID.SUBJECT_KEY_IDENTIFIER,
+        )
+        signer_identifier = cms.SignerIdentifier(
+            name="subject_key_identifier",
+            value=ski.value.digest,
+        )
+    else:
+        signer_identifier = cms.SignerIdentifier(
+            name="issuer_and_serial_number",
+            value={
+                "issuer": asn1_x509.Name.build(
+                    {
+                        "common_name": _subject_common_name(certificate),
+                    },
+                ),
+                "serial_number": signer_serial
+                if signer_serial is not None
+                else certificate.serial_number,
+            },
+        )
     signer_info["sid"] = signer_identifier
     signer_info["digest_algorithm"] = {"algorithm": "sha256"}
-    signer_info["signed_attrs"] = attributes
+    if with_signed_attributes:
+        signer_info["signed_attrs"] = attributes
+    if with_timestamp or with_ocsp:
+        unsigned = cms.CMSAttributes()
+        if with_timestamp:
+            # The signatureTimeStampToken attribute value is a
+            # ContentInfo (an RFC 3161 TimeStampToken).
+            token = cms.ContentInfo()
+            token["content_type"] = "data"
+            token["content"] = core.OctetString(b"placeholder token")
+            timestamp_attr = cms.CMSAttribute()
+            timestamp_attr["type"] = "1.2.840.113549.1.9.16.2.14"
+            timestamp_attr["values"] = [token]
+            unsigned.append(timestamp_attr)
+        if with_ocsp:
+            ocsp_attr = cms.CMSAttribute()
+            ocsp_attr["type"] = "1.2.840.113549.1.9.16.2.24"
+            ocsp_attr["values"] = [core.OctetString(b"placeholder ocsp")]
+            unsigned.append(ocsp_attr)
+        signer_info["unsigned_attrs"] = unsigned
     if curve == "ecdsa":
         signer_info["signature_algorithm"] = {"algorithm": "sha256_ecdsa"}
+    elif pss:
+        signer_info["signature_algorithm"] = {
+            "algorithm": "rsassa_pss",
+            "parameters": {
+                "hash_algorithm": {"algorithm": "sha256"},
+                "mask_gen_algorithm": {
+                    "algorithm": "mgf1",
+                    "parameters": {"algorithm": "sha256"},
+                },
+                "salt_length": 32,
+            },
+        }
     else:
         signer_info["signature_algorithm"] = {"algorithm": "sha256_rsa"}
-    signature = _sign_with(
-        key,
-        _signed_attributes_der(signer_info),
-        curve,
-    )
+    if with_signed_attributes:
+        signature_data = _signed_attributes_der(signer_info)
+    else:
+        signature_data = content
+    signature = _sign_with(key, signature_data, curve, pss=pss)
     signer_info["signature"] = signature
 
     signed_data = cms.SignedData()
@@ -286,8 +375,9 @@ def build_pades_pdf(
     cms_bytes: bytes,
     *,
     subfilter: str = "ETSI.CAdES.detached",
-    m: str = "D:20260115103000Z",
+    m: str | None = "D:20260115103000Z",
     reason: str = "Test Signer",
+    name: str | None = None,
     contents_size: int = 4096,
 ) -> bytes:
     """Build a PAdES-signed PDF from a content stream and a detached CMS.
@@ -298,12 +388,19 @@ def build_pades_pdf(
     is embedded as the ``/Contents`` of the signature dictionary,
     padded with zeros to ``contents_size`` bytes.  The byte range
     covers everything except the ``/Contents`` value, mirroring real
-    PAdES files.
+    PAdES files.  The signature dictionary carries the given ``/M``,
+    ``/Reason`` and ``/Name`` values (``/M`` is omitted when None).
     """
     if len(cms_bytes) > contents_size:
         raise ValueError("CMS too large for the configured contents size")
     padded = cms_bytes.ljust(contents_size, b"\x00")
     contents_hex = padded.hex()
+
+    sig_extra = ""
+    if m:
+        sig_extra += f"   /M ({m})\n"
+    if name:
+        sig_extra += f"   /Name ({name})\n"
 
     template = (
         "1 0 obj\n"
@@ -316,7 +413,8 @@ def build_pades_pdf(
         f"<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /{subfilter}\n"
         "   /ByteRange [0 0000000000 0000000000 0000000000]\n"
         f"   /Contents <{contents_hex}>\n"
-        f"   /M ({m}) /Reason ({reason}) >>\n"
+        f"{sig_extra}"
+        f"   /Reason ({reason}) >>\n"
         "endobj\n"
         "4 0 obj\n"
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R\n"
