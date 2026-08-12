@@ -1,13 +1,13 @@
 """
 Helpers for building synthetic ASiC-E (EDOC 2.0) containers in tests.
 
-The real Latvian EDOC 2.0 sample files contain personal data, so the test
-suite constructs its own containers from scratch: a minimal PDF payload, a
+Real signed documents contain personal data, so the test suite
+constructs its own containers from scratch: a minimal PDF payload, a
 self-signed signer certificate, a genuine XAdES signature and the full
 container layout (``mimetype``, ``META-INF/signatures001.xml`` or
 ``META-INF/edoc-signatures-S1.xml``, ``META-INF/manifest.xml``).
 
-Two signature profiles are supported, mirroring the real-world producers:
+Two signature profiles are supported, mirroring common producers:
 
 * exclusive c14n (``xml-exc-c14n``) with an RSA key and the
   ``signatures001.xml`` naming — the Java eDOC libraries, and
@@ -15,8 +15,7 @@ Two signature profiles are supported, mirroring the real-world producers:
   ``edoc-signatures-S1.xml`` naming — the eParaksts mobile signing
   library.
 
-The cryptographic structure mirrors what real EDOC files look like — the
-container is verified against the real-world eParaksts samples manually.
+The cryptographic structure mirrors what real EDOC files look like.
 """
 
 from __future__ import annotations

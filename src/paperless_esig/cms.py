@@ -242,8 +242,8 @@ def _resolve_signer_certificate(
     if not certificates:
         return None
     if len(certificates) == 1:
-        # Some signers (e.g. the Uruguayan TuID samples) embed only the
-        # signer certificate; the sid then always refers to it.
+        # Some signers embed only the signer certificate; the sid then
+        # always refers to it.
         return certificates[0]
 
     from cryptography.x509 import NameOID
@@ -439,8 +439,7 @@ def _signed_attributes_der(signer_info: cms.SignerInfo) -> bytes | None:
     CMS signatures cover the DER encoding of the ``signedAttrs`` field.
     asn1crypto models the field as implicitly tagged ``[0]``; for
     signature computation the implicit tag is replaced with the plain
-    SET OF tag (RFC 5652, Section 5.5) — verified against real-world
-    CAdES/PAdES samples.
+    SET OF tag (RFC 5652, Section 5.5).
     """
     signed_attrs = signer_info["signed_attrs"]
     if signed_attrs.native is None:
@@ -589,9 +588,8 @@ def certificate_name_attributes(
 def personal_name(cert) -> str | None:
     """Return the given-name + surname of a certificate subject, if any.
 
-    Some national certificates (e.g. the Italian CIE) embed a personal
-    code in the common name and carry the actual name in the givenName
-    and surname attributes.
+    Some national certificates embed a personal code in the common name
+    and carry the actual name in the givenName and surname attributes.
     """
     from cryptography.x509 import NameOID
 
@@ -617,8 +615,7 @@ def signer_name_from_certificate(cert) -> str | None:
 
     The organization is preferred over the common name; placeholder
     common names ("Private") are not usable, and common names that are
-    personal codes (e.g. the Italian CIE tax-code CNs) fall back to
-    given name + surname.
+    personal codes fall back to given name + surname.
     """
     common_name, organization, _ = certificate_name_attributes(cert)
     if organization:

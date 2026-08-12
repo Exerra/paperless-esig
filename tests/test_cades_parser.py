@@ -1,9 +1,9 @@
 """
 Parser integration tests for CAdES (.p7m) and PAdES documents.
 
-These mirror the real-world samples (Italian CIE and Uruguayan TuID
-PDFs): attached CAdES signatures, PAdES PDFs with both subfilters, BER
-encodings and the date fallbacks for signatures without a signing time.
+The fixtures mirror the signature profiles found in the wild: attached
+CAdES signatures, PAdES PDFs with both subfilters, BER encodings and
+the date fallbacks for signatures without a signing time.
 """
 
 from __future__ import annotations
@@ -544,13 +544,13 @@ class TestBerTolerance:
             assert esig_pades.find_pdf_signatures(pdf)[0].subfilter is not None
             assert parser.get_signer_name() == "Test Organization"
 
-    def test_brazilian_profile_parses(self, tmp_path: Path) -> None:
-        """Mirror the Brazilian sample: BER CMS in an adbe.pkcs7.detached
-        signature with a signing time, single embedded certificate."""
+    def test_ber_adbe_profile_parses(self, tmp_path: Path) -> None:
+        """BER CMS in an adbe.pkcs7.detached signature with a signing
+        time and a single embedded certificate."""
         from cades_fixtures import to_ber_indefinite
 
         key, cert, _ = build_signer(
-            common_name="MARIO RAUL PIRES PIZZOLANTI",
+            common_name="Sample Person",
             organization=None,
             country="BR",
         )
@@ -581,7 +581,7 @@ class TestBerTolerance:
         with ESigDocumentParser() as parser:
             parser.parse(path, "application/pdf")
             assert parser.get_date() == _SIGNING_TIME
-            assert parser.get_signer_name() == "MARIO RAUL PIRES PIZZOLANTI"
+            assert parser.get_signer_name() == "Sample Person"
             metadata = parser.extract_metadata(path, "application/pdf")
         assert (
             _metadata_value(metadata, "signature", "pdf_subfilter")

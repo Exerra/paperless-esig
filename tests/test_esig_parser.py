@@ -2,10 +2,8 @@
 Tests for paperless_esig.parser.ESigDocumentParser and its helpers.
 
 Synthetic EDOC 2.0 (ASiC-E) containers are built in-test by the helpers
-in ``esig_fixtures.py`` — real Latvian sample files contain personal data
-and are therefore not committed to the repository.  The cryptographic
-structure of the fixtures mirrors real containers, which are verified
-manually against the genuine eParaksts samples.
+in ``esig_fixtures.py`` — real signed documents contain personal data
+and are therefore not committed to the repository.
 
 The tests import ``documents.parsers`` / ``paperless.parsers``, so
 Paperless-ngx must be installed (or on ``PYTHONPATH``) in the test
