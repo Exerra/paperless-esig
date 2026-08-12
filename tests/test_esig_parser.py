@@ -73,6 +73,12 @@ class TestEdocParserProtocol:
         assert mime_types == {
             "application/zip": ".edoc",
             ESIG_CONTAINER_MIME_TYPE: ".asice",
+            "application/octet-stream": ".p7m",
+            "application/pkcs7-mime": ".p7m",
+            "application/x-pkcs7-mime": ".p7m",
+            "application/pkcs7-signature": ".p7s",
+            "application/x-pkcs7-signature": ".p7s",
+            "application/pdf": ".pdf",
         }
 
     def test_supported_extensions_include_member_states(self) -> None:
@@ -112,8 +118,38 @@ class TestEdocParserProtocol:
         )
 
     def test_score_other_mime_types(self) -> None:
+        # Without a path, application/pdf is never claimed (the built-in
+        # PDF parser handles validation) and unknown types are declined.
         assert ESigDocumentParser.score("application/pdf", "document.pdf") is None
         assert ESigDocumentParser.score("text/plain", "document.txt") is None
+        # octet-stream is accepted when no filename is given (the
+        # API/mail validation paths) — the content check happens at
+        # consumption time — and with a CAdES extension otherwise.
+        assert ESigDocumentParser.score("application/octet-stream", "") == 10
+        assert (
+            ESigDocumentParser.score(
+                "application/octet-stream",
+                "document.p7m",
+            )
+            == 10
+        )
+        assert (
+            ESigDocumentParser.score(
+                "application/octet-stream",
+                "signature.p7s",
+            )
+            == 10
+        )
+        assert (
+            ESigDocumentParser.score(
+                "application/octet-stream",
+                "random.bin",
+            )
+            is None
+        )
+        # The RFC 8551 CAdES MIME types are accepted on their own.
+        assert ESigDocumentParser.score("application/pkcs7-mime", "") == 10
+        assert ESigDocumentParser.score("application/pkcs7-signature", "") == 10
 
     def test_can_produce_archive_is_false(
         self,
@@ -309,7 +345,7 @@ class TestEdocContainerParsing:
     ) -> None:
         path = tmp_path / "plain.edoc"
         path.write_bytes(b"PK\x03\x04\x00\x00\x00\x00\x00\x00")
-        with pytest.raises(ParseError, match="EDOC"):
+        with pytest.raises(ParseError, match="Could not parse signed document"):
             esig_parser.parse(path, ESIG_CONTAINER_MIME_TYPE)
 
     def test_parse_wrong_container_mimetype_raises(
@@ -767,7 +803,11 @@ class TestEdocMetadata:
         return None
 
     def test_metadata_archive_mime_returns_empty(self, tmp_path: Path) -> None:
-        path = _write_container(tmp_path)
+        # Unsigned PDFs (and anything that is not a signed format) yield
+        # no metadata from this parser — they belong to the built-in
+        # PDF parser.
+        path = tmp_path / "plain.pdf"
+        path.write_bytes(b"%PDF-1.4 not really a pdf")
         with ESigDocumentParser() as parser:
             assert parser.extract_metadata(path, "application/pdf") == []
 

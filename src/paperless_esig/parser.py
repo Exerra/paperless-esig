@@ -1,49 +1,70 @@
 """
-Third-party EU e-signature (ETSI ASiC-E) parser for Paperless-ngx.
+Third-party EU e-signature parser for Paperless-ngx.
 
-EDOC 2.0 is the Latvian electronic signature format specified by
-"EDOC Elektroniskā paraksta formāts 2.0".  It is a XAdES signature
-(long-term validation level, parallel signature) packaged inside an
-ETSI ASiC-E container: a ZIP archive containing
+The parser handles three signed-document formats found in the wild:
 
-* a ``mimetype`` entry set to ``application/vnd.etsi.asic-e+zip``,
-* ``META-INF/signatures001.xml`` carrying the XAdES signature
-  (signing time, signer certificate, RFC 3161 timestamp, OCSP values),
-* ``META-INF/manifest.xml`` listing the container contents, and
-* the signed data object itself (a PDF for real-world EDOC documents).
+**EDOC 2.0 / ASiC-E containers** (Latvia, Estonia, Lithuania)
+    EDOC 2.0 is the Latvian electronic signature format specified by
+    "EDOC Elektroniskā paraksta formāts 2.0".  It is a XAdES signature
+    (long-term validation level, parallel signature) packaged inside an
+    ETSI ASiC-E container: a ZIP archive containing
 
-The same container layout is used by the other EU member-state formats
-``.asice`` (Estonia), ``.bdoc`` (Estonia) and ``.adoc`` (Lithuania);
-the parser is format-agnostic and only verifies the container's
-``mimetype`` entry.  The Latvian e-archive additionally produces
-*nested* containers ("EDOC within EDOC") whose outer container wraps
-documents plus an inner EDOC container that carries the actual PDF; the
-parser descends into nested containers to reach the PDF (see
-:meth:`ESigDocumentParser._extract_inner_pdf`).  Every document inside a
-container is ingested: the inner PDFs are merged with the office
-documents (DOCX, ODT, ...) converted via Gotenberg into a single
-rendition PDF, and the text of every document is combined for search
-(see :meth:`ESigDocumentParser.parse`).
+    * a ``mimetype`` entry set to ``application/vnd.etsi.asic-e+zip``,
+    * ``META-INF/signatures001.xml`` carrying the XAdES signature
+      (signing time, signer certificate, RFC 3161 timestamp, OCSP values),
+    * ``META-INF/manifest.xml`` listing the container contents, and
+    * the signed data object itself (a PDF for real-world EDOC documents).
+
+    The same container layout is used by the other EU member-state formats
+    ``.asice`` (Estonia), ``.bdoc`` (Estonia) and ``.adoc`` (Lithuania);
+    the parser is format-agnostic and only verifies the container's
+    ``mimetype`` entry.  The Latvian e-archive additionally produces
+    *nested* containers ("EDOC within EDOC") whose outer container wraps
+    documents plus an inner EDOC container that carries the actual PDF;
+    the parser descends into nested containers to reach the PDF (see
+    :meth:`ESigDocumentParser._extract_inner_pdf`).  Every document
+    inside a container is ingested: the inner PDFs are merged with the
+    office documents (DOCX, ODT, ...) converted via Gotenberg into a
+    single rendition PDF, and the text of every document is combined for
+    search (see :meth:`ESigDocumentParser.parse`).
+
+**CAdES signatures (``.p7m``)**
+    A CMS ``SignedData`` (ETSI EN 319 122) wrapping the signed document
+    (usually a PDF) inside the ``encapContentInfo``.  The embedded PDF
+    becomes the rendition; the CMS signing time, signer certificate and
+    offline verification results are exposed as metadata.  Both DER and
+    BER (indefinite-length) encodings are accepted.  Detached ``.p7s``
+    signatures (no embedded content) are rejected during parsing with a
+    clear error message.
+
+**PAdES-signed PDFs**
+    PDFs whose signature dictionary uses the ``ETSI.CAdES.detached`` or
+    ``adbe.pkcs7.detached`` subfilter.  The signed PDF is used as the
+    rendition as-is, and the signature metadata (covered byte range,
+    signer, verification) is exposed like for CAdES.
 
 Detection
 ---------
-libmagic does not recognise ASiC containers, so ``python-magic`` reports
-``application/zip`` for these files.  Since a third-party parser can
-only declare the MIME type libmagic actually reports, this parser
-declares ``application/zip`` and uses content inspection (the
-container's ``mimetype`` entry, see :func:`is_esig_container`) in
-:meth:`ESigDocumentParser.score` to only claim actual ASiC-E containers.
-Consequences:
+libmagic reports ASiC containers as ``application/zip``, CAdES files
+as ``application/octet-stream`` and PAdES PDFs as plain
+``application/pdf``, so the parser cannot rely on MIME types alone.
+:meth:`ESigDocumentParser.score` inspects the file content (the
+container's ``mimetype`` entry via :func:`is_esig_container`, the CMS
+structure via :func:`is_cades`, the signature dictionary via
+:func:`is_pades_pdf`) to only claim actual signed documents.  PDFs
+without a signature stay with the built-in PDF parser.  Consequences:
 
-* documents are stored with ``document.mime_type == "application/zip"``;
-* plain ZIP files pass the API/mail validation (``score`` cannot inspect
-  a file without a path) but are rejected during consumption with a
-  clear error message.
+* documents are stored with the MIME type libmagic reports
+  (``application/zip``, ``application/octet-stream``, ...);
+* plain ZIP files pass the API/mail validation (``score`` cannot
+  inspect a file without a path) but are rejected during consumption
+  with a clear error message; the same applies to non-signature
+  ``application/octet-stream`` files with a ``.p7m`` extension.
 
 The parser extracts the signed PDF and stores it as the archive
 rendition (the frontend cannot display ZIP containers natively), keeps
 the original container as the source file, extracts the PDF text for
-search and exposes the XAdES signature metadata — signer, signing time,
+search and exposes the signature metadata — signer, signing time,
 certificate chain, timestamps and cryptographic verification results —
 through :meth:`ESigDocumentParser.extract_metadata`.
 """
@@ -88,6 +109,11 @@ ESIG_CONTAINER_MIME_TYPE: str = "application/vnd.etsi.asic-e+zip"
 #: Estonian one and ``.adoc`` the Lithuanian one.
 _ESIG_FILE_EXTENSIONS: tuple[str, ...] = (".edoc", ".asice", ".bdoc", ".adoc")
 
+#: File extensions of standalone CAdES signatures.  ``.p7m`` carries the
+#: signed document inside the CMS; ``.p7s`` is a detached signature
+#: without embedded content (rejected during parsing with a clear error).
+_CADES_FILE_EXTENSIONS: tuple[str, ...] = (".p7m", ".p7s")
+
 #: libmagic reports ASiC containers as ``application/zip``; a third-party
 #: parser cannot influence detection, so this is the MIME type this
 #: parser declares.  Content inspection in ``score()`` keeps it from
@@ -98,6 +124,15 @@ _ESIG_FILE_EXTENSIONS: tuple[str, ...] = (".edoc", ".asice", ".bdoc", ".adoc")
 _SUPPORTED_MIME_TYPES: dict[str, str] = {
     "application/zip": ".edoc",
     ESIG_CONTAINER_MIME_TYPE: ".asice",
+    # CAdES (.p7m with the signed document attached, .p7s detached).
+    "application/octet-stream": ".p7m",
+    "application/pkcs7-mime": ".p7m",
+    "application/x-pkcs7-mime": ".p7m",
+    "application/pkcs7-signature": ".p7s",
+    "application/x-pkcs7-signature": ".p7s",
+    # PAdES (signed PDFs only; content-checked in ``score()`` so that
+    # unsigned PDFs stay with the built-in parser).
+    "application/pdf": ".pdf",
 }
 
 # Register the member-state extensions so that
@@ -107,6 +142,8 @@ mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".edoc")
 mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".asice")
 mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".bdoc")
 mimetypes.add_type(ESIG_CONTAINER_MIME_TYPE, ".adoc")
+mimetypes.add_type("application/pkcs7-mime", ".p7m")
+mimetypes.add_type("application/pkcs7-signature", ".p7s")
 
 # XML namespaces used inside XAdES signature files and the ODF manifest.
 _XMLDSIG_NS: str = "http://www.w3.org/2000/09/xmldsig#"
@@ -155,7 +192,7 @@ _INCLUSIVE_C14N_ALGORITHMS: frozenset[str] = frozenset(
 
 #: Matches the leading date/time of PDF date strings ("D:YYYYMMDDHHMMSS...").
 _PDF_DATE_RE: re.Pattern[str] = re.compile(
-    r"^D:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})",
+    r"^D:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:([+-])(\d{2})'(\d{2})'|Z)?",
 )
 
 #: XML namespace of the WordprocessingML main document part.
@@ -211,10 +248,51 @@ def is_esig_container(source: Path | bytes) -> bool:
     return mimetype == ESIG_CONTAINER_MIME_TYPE
 
 
+def is_cades(source: Path | bytes) -> bool:
+    """Return True if *source* is a CMS SignedData (CAdES) signature.
+
+    *source* may be a filesystem path or the raw file contents.  Both
+    DER and BER (indefinite-length) encodings are accepted.
+    """
+    try:
+        data = (
+            source
+            if isinstance(source, (bytes, bytearray))
+            else Path(source).read_bytes()
+        )
+    except OSError:
+        return False
+    from paperless_esig import cms as esig_cms
+
+    return esig_cms.is_cades(data)
+
+
+def is_pades_pdf(source: Path | bytes) -> bool:
+    """Return True if *source* is a PDF with a PAdES signature.
+
+    *source* may be a filesystem path or the raw file contents.  Only
+    PDFs that actually carry a signature dictionary are accepted, so
+    that unsigned PDFs stay with the built-in parser.
+    """
+    try:
+        data = (
+            source
+            if isinstance(source, (bytes, bytearray))
+            else Path(source).read_bytes()
+        )
+    except OSError:
+        return False
+    from paperless_esig import pades as esig_pades
+
+    return esig_pades.is_pades_pdf(data)
+
+
 def extract_signer_name(source: Path | bytes) -> str | None:
     """Return the signer name of the first signature, or None.
 
-    *source* may be a filesystem path or the raw file contents.  The
+    *source* may be a filesystem path or the raw file contents.  Works
+    for every format the parser understands: EDOC 2.0 (ASiC-E)
+    containers, CAdES (``.p7m``) signatures and PAdES-signed PDFs.  The
     signer's organization is preferred over the certificate common name
     (Latvian individual certificates embed a personal code in the CN),
     and placeholder common names ("Private", "Privātpersona") are not
@@ -224,16 +302,41 @@ def extract_signer_name(source: Path | bytes) -> str | None:
     Parameters
     ----------
     source:
-        Path to the container, or the file contents as bytes.
+        Path to the signed file, or the file contents as bytes.
 
     Returns
     -------
     str | None
         The signer's organization or common name, or None.
     """
-    if not is_esig_container(source):
-        return None
     try:
+        if is_cades(source):
+            from paperless_esig import cms as esig_cms
+
+            document = esig_cms.parse_cms(
+                source if isinstance(source, (bytes, bytearray)) else Path(source).read_bytes(),
+            )
+            if document and document.signers:
+                return esig_cms.signer_certificate_name(document.signers[0])
+            return None
+        if is_pades_pdf(source):
+            from paperless_esig import cms as esig_cms
+            from paperless_esig import pades as esig_pades
+
+            data = (
+                source
+                if isinstance(source, (bytes, bytearray))
+                else Path(source).read_bytes()
+            )
+            signatures = esig_pades.find_pdf_signatures(data)
+            if not signatures:
+                return None
+            document = esig_cms.parse_cms(signatures[0].contents)
+            if document and document.signers:
+                return esig_cms.signer_certificate_name(document.signers[0])
+            return None
+        if not is_esig_container(source):
+            return None
         with (
             ESigDocumentParser() as parser,
             zipfile.ZipFile(
@@ -249,7 +352,7 @@ def extract_signer_name(source: Path | bytes) -> str | None:
             return parser._signer_certificate_name(archive, signature_name)
     except Exception:
         logger.warning(
-            "Could not extract signer name from container",
+            "Could not extract signer name from document",
             exc_info=True,
         )
         return None
@@ -315,6 +418,9 @@ def _parse_xml_datetime(value: str) -> datetime.datetime | None:
 def _parse_pdf_date(value: str) -> datetime.datetime | None:
     """Parse a PDF date string ("D:YYYYMMDDHHMMSS+HH'mm'") into a datetime.
 
+    The timezone offset (when present) is applied and the result is
+    converted to UTC; naive values are interpreted as UTC.
+
     Parameters
     ----------
     value:
@@ -328,9 +434,11 @@ def _parse_pdf_date(value: str) -> datetime.datetime | None:
     match = _PDF_DATE_RE.match(value.strip())
     if match is None:
         return None
-    year, month, day, hour, minute, second = (int(g) for g in match.groups())
+    year, month, day, hour, minute, second = (
+        int(g) for g in match.groups()[:6]
+    )
     try:
-        return datetime.datetime(
+        parsed = datetime.datetime(
             year,
             month,
             day,
@@ -341,6 +449,17 @@ def _parse_pdf_date(value: str) -> datetime.datetime | None:
         )
     except ValueError:
         return None
+    offset_sign, offset_hour, offset_minute = match.groups()[6:]
+    if offset_sign and offset_hour is not None and offset_minute is not None:
+        offset = datetime.timedelta(
+            hours=int(offset_hour),
+            minutes=int(offset_minute),
+        )
+        if offset_sign == "-":
+            parsed += offset
+        else:
+            parsed -= offset
+    return parsed
 
 
 #: Certificate common names that do not identify the signer.  Some
@@ -393,15 +512,18 @@ def _find_embedded_certificates(der: bytes) -> list:
 
 
 class ESigDocumentParser:
-    """Parse EDOC 2.0 (ASiC-E) signed containers for Paperless-ngx.
+    """Parse electronically signed documents for Paperless-ngx.
 
-    The signed PDF inside the container is extracted and used as the
+    Handles EDOC 2.0 (ASiC-E) containers, CAdES (``.p7m``) signatures
+    and PAdES-signed PDFs.  The signed PDF is extracted/used as the
     archive rendition, since browsers cannot display ZIP containers
-    natively (``requires_pdf_rendition=True``).  The original container
-    is archived untouched.  Text is extracted from the inner PDF, the
-    document date is taken from the XAdES signing time, and the
-    signature metadata (signer, certificate chain, timestamps,
-    verification results) is exposed via ``extract_metadata``.
+    natively and the signed rendition preserves the signature
+    (``requires_pdf_rendition=True``).  The original file is archived
+    untouched.  Text is extracted from the PDF, the document date is
+    taken from the signature's signing time (with format-specific
+    fallbacks), and the signature metadata (signer, certificate chain,
+    timestamps, verification results) is exposed via
+    ``extract_metadata``.
 
     Class attributes
     ----------------
@@ -444,14 +566,31 @@ class ESigDocumentParser:
     ) -> int | None:
         """Return the priority score for handling this file.
 
-        The MIME type is ``application/zip`` for every ZIP archive, so
-        the file's actual content decides: when *path* is available the
-        container's ``mimetype`` entry is inspected (:func:`is_esig_container`).
-        When no path is given (the API/mail validation paths call this
-        with ``filename=""``), the filename extension is the only signal
-        and any ``application/zip`` file is accepted so that ASiC-E
-        uploads pass validation; plain ZIPs are then rejected during
-        consumption with a clear error message.
+        The MIME types of every handled format are ambiguous — libmagic
+        reports ``application/zip`` for every ZIP archive and
+        ``application/octet-stream`` for every unknown binary, and any
+        ``application/pdf`` is a potential PAdES document — so the
+        file's actual content decides: when *path* is available the
+        container/signature is inspected (see :func:`is_esig_container`,
+        :func:`is_cades` and :func:`is_pades_pdf`).  When no path is
+        given (the API/mail validation paths call this with
+        ``filename=""``), the filename extension is the only signal and
+        only unambiguous inputs are accepted:
+
+        * ``application/zip`` is always accepted so that ASiC-E uploads
+          pass validation (plain ZIPs are then rejected during
+          consumption with a clear error message),
+        * the RFC 8551 CAdES MIME types are always accepted (they are
+          specific enough on their own),
+        * ``application/octet-stream`` is accepted when no filename is
+          given — the API/mail validation paths never pass a filename,
+          so any octet-stream file passes validation and only actual
+          CAdES signatures (content-checked here once the path is
+          available) are consumed; with a real filename, only a
+          ``.p7m`` / ``.p7s`` extension is accepted,
+        * ``application/pdf`` is never accepted without a path — the
+          built-in PDF parser handles validation, and at consumption
+          time the path is available for the content check.
 
         Parameters
         ----------
@@ -465,13 +604,32 @@ class ESigDocumentParser:
         Returns
         -------
         int | None
-            10 when the file is (or may be) an ASiC-E container,
-            otherwise None.
+            10 when the file is (or may be) an ASiC-E container, a
+            CAdES signature or a PAdES-signed PDF, otherwise None.
         """
         if mime_type not in _SUPPORTED_MIME_TYPES:
             return None
         if path is not None:
-            return 10 if is_esig_container(path) else None
+            if mime_type == "application/pdf":
+                return 10 if is_pades_pdf(path) else None
+            if mime_type == "application/octet-stream":
+                return 10 if is_cades(path) else None
+            if mime_type == "application/zip":
+                return 10 if is_esig_container(path) else None
+            return 10
+        if mime_type == "application/pdf":
+            return None
+        if mime_type == "application/octet-stream":
+            # The API/mail validation paths never pass a filename, so
+            # every octet-stream file must be accepted there (content is
+            # inspected once the consumption path provides it).  When a
+            # filename is available, require a CAdES extension.
+            return (
+                10
+                if not filename
+                or filename.lower().endswith(_CADES_FILE_EXTENSIONS)
+                else None
+            )
         return 10
 
     # ------------------------------------------------------------------
@@ -543,27 +701,32 @@ class ESigDocumentParser:
         *,
         produce_archive: bool = True,
     ) -> None:
-        """Extract the signed PDF(s) and text from the EDOC container.
+        """Extract the signed PDF(s) and text from the document.
 
-        Every document inside the container is ingested: the inner PDFs
-        (directly, or inside nested EDOC containers) are merged with the
-        office documents (DOCX, ODT, ...) converted to PDF via Gotenberg
-        into a single rendition PDF, and the text of every document is
-        combined for search.  When Gotenberg/Tika are unavailable the
-        DOCX text is still extracted locally and the affected pages are
-        omitted from the rendition (with a warning) — consumption never
-        fails because of a missing external service.
+        Three formats are handled, depending on the file's content:
+
+        * **EDOC 2.0 (ASiC-E) containers**: every document inside the
+          container is ingested — the inner PDFs (directly, or inside
+          nested EDOC containers) are merged with the office documents
+          (DOCX, ODT, ...) converted to PDF via Gotenberg into a single
+          rendition PDF, and the text of every document is combined for
+          search.
+        * **CAdES (``.p7m``) signatures**: the PDF attached inside the
+          CMS is used as the rendition and its text for search.
+        * **PAdES-signed PDFs**: the signed PDF itself is the rendition
+          (PAdES signatures do not interfere with text extraction) and
+          its text is used for search.
 
         The ``produce_archive`` flag is accepted for protocol
         compatibility but always honoured — the PDF rendition is always
-        produced since EDOC containers cannot be displayed natively.
-        Nested containers ("EDOC within EDOC", as produced by the Latvian
-        e-archive) are descended into to reach the actual PDF.
+        produced since EDOC containers cannot be displayed natively and
+        the signature metadata of CAdES/PAdES documents is worth
+        preserving in the rendition.
 
         Parameters
         ----------
         document_path:
-            Absolute path to the ``.edoc`` file.
+            Absolute path to the file.
         mime_type:
             Detected MIME type of the document.
         produce_archive:
@@ -573,85 +736,155 @@ class ESigDocumentParser:
         Raises
         ------
         documents.parsers.ParseError
-            If the container is invalid or contains no PDF document.
+            If the file is not a supported signed format.
         """
-        logger.debug("Parsing file %s into an EDOC container", document_path.name)
+        logger.debug("Parsing file %s", document_path.name)
 
-        archive_path: Path | None = None
-        pdf_parts: list[Path] = []
-        text_parts: list[tuple[str, str]] = []
         try:
-            with zipfile.ZipFile(document_path) as archive:
-                self._validate_container(archive, document_path)
-
-                signature_name = self._find_signature_file(archive, document_path)
-                # The signing time of the first signature is used as the
-                # document date. EDOC 2.0 supports parallel signatures
-                # (multiple co-signers); later signatures are still exposed
-                # via extract_metadata (signature_count).
-                self._date = self._signing_time(archive, signature_name)
-                # The signer of the first signature is exposed as a
-                # potential correspondent for consumption-time assignment.
-                self._signer_name = self._signer_certificate_name(
-                    archive,
-                    signature_name,
-                )
-
-                for index, name in enumerate(
-                    self._collect_documents(archive, signature_name),
-                ):
-                    pdf_bytes = self._document_pdf_bytes(
-                        archive,
-                        name,
-                        document_path,
-                    )
-                    part_path: Path | None = None
-                    if pdf_bytes is not None:
-                        part_path = self._tempdir / f"document-part-{index}.pdf"
-                        part_path.write_bytes(pdf_bytes)
-                        pdf_parts.append(part_path)
-                    text = self._document_text(archive, name, part_path)
-                    if text:
-                        text_parts.append((name, text))
-
-            if not pdf_parts:
-                raise ParseError(
-                    f"{document_path}: container contains no PDF document",
-                )
-            archive_path = self._tempdir / "document.pdf"
-            self._merge_pdfs(pdf_parts, archive_path)
+            if is_cades(document_path):
+                self._parse_cades_document(document_path)
+            elif is_pades_pdf(document_path):
+                self._parse_pades_document(document_path)
+            else:
+                self._parse_esig_container(document_path)
         except ParseError:
             raise
         except Exception as err:
             raise ParseError(
-                f"Could not parse EDOC container {document_path}: {err}",
+                f"Could not parse signed document {document_path}: {err}",
             ) from err
 
+        from paperless.parsers.utils import post_process_text
+
+        if self._text:
+            self._text = post_process_text(self._text) or ""
+
+        if not self._text:
+            logger.warning(
+                "No text extracted from %s — it may be a scanned image",
+                document_path.name,
+            )
+
+    def _parse_esig_container(self, document_path: Path) -> None:
+        """Parse an EDOC 2.0 (ASiC-E) container (the original XAdES path)."""
+        archive_path: Path | None = None
+        pdf_parts: list[Path] = []
+        text_parts: list[tuple[str, str]] = []
+        with zipfile.ZipFile(document_path) as archive:
+            self._validate_container(archive, document_path)
+
+            signature_name = self._find_signature_file(archive, document_path)
+            # The signing time of the first signature is used as the
+            # document date. EDOC 2.0 supports parallel signatures
+            # (multiple co-signers); later signatures are still exposed
+            # via extract_metadata (signature_count).
+            self._date = self._signing_time(archive, signature_name)
+            # The signer of the first signature is exposed as a
+            # potential correspondent for consumption-time assignment.
+            self._signer_name = self._signer_certificate_name(
+                archive,
+                signature_name,
+            )
+
+            for index, name in enumerate(
+                self._collect_documents(archive, signature_name),
+            ):
+                pdf_bytes = self._document_pdf_bytes(
+                    archive,
+                    name,
+                    document_path,
+                )
+                part_path: Path | None = None
+                if pdf_bytes is not None:
+                    part_path = self._tempdir / f"document-part-{index}.pdf"
+                    part_path.write_bytes(pdf_bytes)
+                    pdf_parts.append(part_path)
+                text = self._document_text(archive, name, part_path)
+                if text:
+                    text_parts.append((name, text))
+
+        if not pdf_parts:
+            raise ParseError(
+                f"{document_path}: container contains no PDF document",
+            )
+        archive_path = self._tempdir / "document.pdf"
+        self._merge_pdfs(pdf_parts, archive_path)
         self._archive_path = archive_path
 
         if self._date is None:
             self._date = self._pdf_creation_date(archive_path)
 
-        from paperless.parsers.utils import post_process_text
-
         if len(text_parts) == 1:
-            self._text = post_process_text(text_parts[0][1]) or ""
+            self._text = text_parts[0][1]
         elif text_parts:
-            self._text = (
-                post_process_text(
-                    "\n\n".join(f"=== {name} ===\n{text}" for name, text in text_parts),
-                )
-                or ""
+            self._text = "\n\n".join(
+                f"=== {name} ===\n{text}" for name, text in text_parts
             )
-        else:
-            self._text = ""
 
-        if not self._text:
-            logger.warning(
-                "No text extracted from the documents inside %s — they "
-                "may be scanned images",
-                document_path.name,
+    def _parse_cades_document(self, document_path: Path) -> None:
+        """Parse a CAdES (``.p7m``) signature with attached PDF content."""
+        from paperless.parsers.utils import extract_pdf_text
+
+        from paperless_esig import cms as esig_cms
+
+        data = document_path.read_bytes()
+        document = esig_cms.parse_cms(data)
+        if document is None or document.content is None:
+            raise ParseError(
+                f"{document_path}: not a CAdES signature with attached content",
             )
+        if not document.content.startswith(b"%PDF"):
+            raise ParseError(
+                f"{document_path}: the attached content is not a PDF "
+                f"(starts with {document.content[:8]!r})",
+            )
+
+        part_path = self._tempdir / "document-part-0.pdf"
+        part_path.write_bytes(document.content)
+        self._archive_path = self._tempdir / "document.pdf"
+        self._merge_pdfs([part_path], self._archive_path)
+
+        signer = document.signers[0] if document.signers else None
+        self._date = signer.signing_time if signer else None
+        if self._date is None:
+            self._date = self._pdf_creation_date(self._archive_path)
+        self._signer_name = (
+            esig_cms.signer_certificate_name(signer) if signer else None
+        )
+        self._text = extract_pdf_text(self._archive_path, log=logger) or ""
+
+    def _parse_pades_document(self, document_path: Path) -> None:
+        """Parse a PAdES-signed PDF.
+
+        The signed PDF is used as the rendition as-is; the document date
+        prefers the CMS signing time, falls back to the signature's
+        ``/M`` field (not cryptographically protected) and finally to
+        the PDF creation date.
+        """
+        from paperless.parsers.utils import extract_pdf_text
+
+        from paperless_esig import cms as esig_cms
+        from paperless_esig import pades as esig_pades
+
+        pdf_data = document_path.read_bytes()
+        self._archive_path = self._tempdir / "document.pdf"
+        shutil.copyfile(document_path, self._archive_path)
+
+        signatures = esig_pades.find_pdf_signatures(pdf_data)
+        signer = None
+        if signatures:
+            document = esig_cms.parse_cms(signatures[0].contents)
+            if document is not None and document.signers:
+                signer = document.signers[0]
+        self._date = signer.signing_time if signer else None
+        if self._date is None and signatures:
+            self._date = _parse_pdf_date(signatures[0].m or "")
+        if self._date is None:
+            self._date = self._pdf_creation_date(self._archive_path)
+        self._signer_name = (
+            esig_cms.signer_certificate_name(signer) if signer else None
+        )
+        self._text = extract_pdf_text(self._archive_path, log=logger) or ""
 
     # ------------------------------------------------------------------
     # Result accessors
@@ -770,15 +1003,22 @@ class ESigDocumentParser:
         document_path: Path,
         mime_type: str,
     ) -> list[MetadataEntry]:
-        """Extract container and XAdES signature metadata.
+        """Extract container/CMS and signature metadata.
 
-        Returns container entries (mimetype, manifest file list) and
-        signature entries (signing time, signer certificate, certificate
-        chain, algorithms, timestamp and OCSP information, and
-        cryptographic verification results).  Verification is performed
-        offline: the signed PDF's digest is compared against the
-        signature reference and the signature value is checked against
-        the canonicalised ``SignedInfo``.
+        Returns signature entries (signing time, signer certificate,
+        certificate chain, algorithms, timestamp and OCSP information,
+        and cryptographic verification results) for every supported
+        format:
+
+        * EDOC 2.0 (ASiC-E) containers: container entries (mimetype,
+          manifest file list) plus XAdES signature entries,
+        * CAdES (``.p7m``) signatures: CMS signature entries,
+        * PAdES-signed PDFs: signature dictionary entries (subfilter,
+          byte range) plus CMS signature entries.
+
+        Verification is performed offline: the signed content's digest
+        is compared against the ``messageDigest`` attribute and the
+        signature value is checked against the signed attributes.
 
         Returns
         -------
@@ -787,14 +1027,23 @@ class ESigDocumentParser:
         """
         result: list[MetadataEntry] = []
 
-        if mime_type == "application/pdf":
-            return result
-
         try:
-            with zipfile.ZipFile(document_path) as archive:
-                self._append_container_metadata(archive, result)
-                signature_name = self._find_signature_file(archive, document_path)
-                self._append_signature_metadata(archive, signature_name, result)
+            if is_cades(document_path):
+                self._append_cades_metadata(document_path, result)
+            elif is_pades_pdf(document_path):
+                self._append_pades_metadata(document_path, result)
+            elif is_esig_container(document_path):
+                with zipfile.ZipFile(document_path) as archive:
+                    self._append_container_metadata(archive, result)
+                    signature_name = self._find_signature_file(
+                        archive,
+                        document_path,
+                    )
+                    self._append_signature_metadata(
+                        archive,
+                        signature_name,
+                        result,
+                    )
         except Exception as err:
             logger.warning(
                 "Error while fetching document metadata for %s: %s",
@@ -805,6 +1054,211 @@ class ESigDocumentParser:
 
         result.sort(key=lambda item: (item["prefix"], item["key"]))
         return result
+
+    def _append_cades_metadata(
+        self,
+        document_path: Path,
+        result: list[MetadataEntry],
+    ) -> None:
+        """Append CAdES (``.p7m``) signature metadata and verification."""
+        from paperless_esig import cms as esig_cms
+
+        document = esig_cms.parse_cms(document_path.read_bytes())
+        if document is None:
+            return
+        self._append_cms_metadata(document, document.content, result)
+
+    def _append_pades_metadata(
+        self,
+        document_path: Path,
+        result: list[MetadataEntry],
+    ) -> None:
+        """Append PAdES PDF signature metadata and verification."""
+        from paperless_esig import cms as esig_cms
+        from paperless_esig import pades as esig_pades
+
+        pdf_data = document_path.read_bytes()
+        signatures = esig_pades.find_pdf_signatures(pdf_data)
+        if not signatures:
+            return
+        signature = signatures[0]
+        result.append(
+            {
+                "namespace": "",
+                "prefix": "signature",
+                "key": "pdf_subfilter",
+                "value": signature.subfilter or "unknown",
+            },
+        )
+        result.append(
+            {
+                "namespace": "",
+                "prefix": "signature",
+                "key": "pdf_byte_range",
+                "value": " ".join(str(v) for v in signature.byte_range),
+            },
+        )
+        if signature.m:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "pdf_signing_time",
+                    "value": signature.m,
+                },
+            )
+        if signature.reason:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "signer_reason",
+                    "value": signature.reason,
+                },
+            )
+        if signature.name:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "signer_pdf_name",
+                    "value": signature.name,
+                },
+            )
+        document = esig_cms.parse_cms(signature.contents)
+        if document is None:
+            return
+        covered = esig_pades.covered_bytes(pdf_data, signature.byte_range)
+        self._append_cms_metadata(document, covered, result)
+
+    def _append_cms_metadata(
+        self,
+        document: object,
+        content: bytes | None,
+        result: list[MetadataEntry],
+    ) -> None:
+        """Append CMS signature metadata and verification results.
+
+        *document* is a :class:`paperless_esig.cms.CmsDocument`; the
+        signature of the first signer is detailed and the remaining
+        signers contribute to the count.
+        """
+        from paperless_esig import cms as esig_cms
+
+        if not document.signers:
+            return
+        result.append(
+            {
+                "namespace": "",
+                "prefix": "signature",
+                "key": "signature_count",
+                "value": str(len(document.signers)),
+            },
+        )
+        signer = document.signers[0]
+
+        if signer.signing_time is not None:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "signing_time",
+                    "value": signer.signing_time.isoformat(),
+                },
+            )
+        if signer.digest_algorithm:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "digest_algorithm",
+                    "value": signer.digest_algorithm,
+                },
+            )
+        if signer.signature_algorithm:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "signature_algorithm",
+                    "value": signer.signature_algorithm,
+                },
+            )
+        if signer.certificate is not None:
+            from cryptography.hazmat.primitives import serialization
+
+            self._append_certificate_metadata(
+                base64.b64encode(
+                    signer.certificate.public_bytes(serialization.Encoding.DER),
+                ).decode("ascii"),
+                result,
+            )
+        if content is not None:
+            digest_valid = esig_cms.verify_message_digest(signer, content)
+            if digest_valid is not None:
+                result.append(
+                    {
+                        "namespace": "",
+                        "prefix": "signature",
+                        "key": "document_digest_valid",
+                        "value": str(digest_valid).lower(),
+                    },
+                )
+        signature_valid = esig_cms.verify_signature(signer, content or b"")
+        if signature_valid is not None:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "signature_valid",
+                    "value": str(signature_valid).lower(),
+                },
+            )
+        if signer.timestamp_present:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "timestamp",
+                    "key": "signature_timestamp",
+                    "value": "present",
+                },
+            )
+        if signer.ocsp_present:
+            result.append(
+                {
+                    "namespace": "",
+                    "prefix": "signature",
+                    "key": "ocsp_response_count",
+                    "value": "1",
+                },
+            )
+        if len(document.certificates) > 1:
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.x509 import NameOID
+
+            chain: list[str] = []
+            seen: set[bytes] = set()
+            for certificate in document.certificates:
+                der = certificate.public_bytes(serialization.Encoding.DER)
+                if der in seen:
+                    continue
+                seen.add(der)
+                names = certificate.subject.get_attributes_for_oid(
+                    NameOID.COMMON_NAME,
+                )
+                if names:
+                    chain.append(_as_text(names[0].value))
+                else:
+                    chain.append(str(certificate.serial_number))
+            if chain:
+                result.append(
+                    {
+                        "namespace": "",
+                        "prefix": "signature",
+                        "key": "certificate_chain",
+                        "value": " > ".join(chain),
+                    },
+                )
 
     # ------------------------------------------------------------------
     # Container helpers

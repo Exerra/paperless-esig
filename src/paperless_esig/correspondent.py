@@ -5,9 +5,10 @@ Paperless-ngx's consumption pipeline has no hook for a third-party
 package to suggest a correspondent *before* the document is saved — the
 correspondent is assigned by content matching and workflow rules inside
 the consumer.  This module listens to the
-``document_consumption_finished`` signal instead and assigns the XAdES
-signer of an ASiC-E container as the correspondent when no correspondent
-was determined during consumption.
+``document_consumption_finished`` signal instead and assigns the signer
+of a signed document (ASiC-E container, CAdES ``.p7m`` or PAdES PDF) as
+the correspondent when no correspondent was determined during
+consumption.
 
 The consumer fires ``document_consumption_finished`` with the document
 and the path of the consumed file *before* the files are moved to their
@@ -51,7 +52,7 @@ logger = logging.getLogger("paperless_esig.correspondent")
 def _assign_signer_as_correspondent_enabled() -> bool:
     """Return whether signer-as-correspondent assignment is enabled."""
     return os.getenv(
-        "PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT", "yes"
+        "PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT", "yes",
     ).strip().lower() in (
         "1",
         "true",
@@ -94,7 +95,20 @@ def _on_document_consumption_finished(
         return
     if getattr(document, "correspondent_id", None) is not None:
         return
-    if getattr(document, "mime_type", None) != "application/zip":
+    # Every MIME type this parser can claim: ASiC-E containers
+    # (application/zip), CAdES .p7m/.p7s files (octet-stream /
+    # pkcs7-mime / pkcs7-signature) and PAdES-signed PDFs.  The signer
+    # extraction itself rejects documents without a signature, so the
+    # broad application/pdf gate is harmless.
+    if getattr(document, "mime_type", None) not in {
+        "application/zip",
+        "application/octet-stream",
+        "application/pkcs7-mime",
+        "application/x-pkcs7-mime",
+        "application/pkcs7-signature",
+        "application/x-pkcs7-signature",
+        "application/pdf",
+    }:
         return
     if original_file is None:
         return

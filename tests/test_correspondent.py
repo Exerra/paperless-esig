@@ -92,7 +92,7 @@ class TestSignerAsCorrespondentHandler:
                 "paperless_esig.parser.extract_signer_name",
             ) as extract,
             mock.patch(
-                "paperless_esig.correspondent._load_correspondent_model"
+                "paperless_esig.correspondent._load_correspondent_model",
             ) as load,
         ):
             _on_document_consumption_finished(
@@ -115,17 +115,55 @@ class TestSignerAsCorrespondentHandler:
             )
         extract.assert_not_called()
 
-    def test_skips_non_zip_mime_types(self) -> None:
-        document = _document_stub(mime_type="application/pdf")
+    def test_skips_non_supported_mime_types(self) -> None:
+        document = _document_stub(mime_type="application/vnd.ms-excel")
         with mock.patch(
             "paperless_esig.parser.extract_signer_name",
         ) as extract:
             _on_document_consumption_finished(
                 sender=object(),
                 document=document,
-                original_file=Path("/tmp/doc.pdf"),
+                original_file=Path("/tmp/doc.xlsx"),
             )
         extract.assert_not_called()
+
+    def test_handles_supported_mime_types(self) -> None:
+        for mime_type in (
+            "application/zip",
+            "application/octet-stream",
+            "application/pkcs7-mime",
+            "application/pdf",
+        ):
+            document = _document_stub(mime_type=mime_type)
+            queryset = mock.Mock()
+            queryset.first.return_value = _fake_correspondent()
+            correspondent_model = mock.Mock()
+            correspondent_model.MATCH_NONE = "none"
+            correspondent_model.objects.filter.return_value = queryset
+            with (
+                mock.patch(
+                    "paperless_esig.parser.extract_signer_name",
+                    return_value="Test Signer",
+                ) as extract,
+                mock.patch(
+                    "paperless_esig.correspondent._load_correspondent_model",
+                    return_value=correspondent_model,
+                ),
+                mock.patch(
+                    "paperless_esig.correspondent._load_document_model",
+                    return_value=mock.Mock(),
+                ),
+                mock.patch(
+                    "paperless_esig.correspondent._search_backend",
+                    return_value=mock.Mock(),
+                ),
+            ):
+                _on_document_consumption_finished(
+                    sender=object(),
+                    document=document,
+                    original_file=Path("/tmp/doc.p7m"),
+                )
+            extract.assert_called_once()
 
     def test_skips_without_original_file(self) -> None:
         document = _document_stub()
@@ -143,7 +181,7 @@ class TestSignerAsCorrespondentHandler:
                 return_value=None,
             ),
             mock.patch(
-                "paperless_esig.correspondent._load_correspondent_model"
+                "paperless_esig.correspondent._load_correspondent_model",
             ) as load,
         ):
             _on_document_consumption_finished(
