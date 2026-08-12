@@ -6,7 +6,7 @@
 #   docker build -t paperless-ngx-esig .
 #
 #   # a specific release
-#   docker build --build-arg ESIG_VERSION=0.2.0 -t paperless-ngx-esig .
+#   docker build --build-arg ESIG_VERSION=0.3.0 -t paperless-ngx-esig .
 #
 #   # your local checkout (for development / unreleased changes)
 #   docker build --build-arg ESIG_SOURCE=local -t paperless-ngx-esig .

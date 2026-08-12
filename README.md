@@ -93,7 +93,7 @@ uv pip install paperless-esig
 1. Start Paperless-ngx and check the logs. Look for a line like this:
 
    ```
-   [paperless.parsers.registry]   [third-party] Paperless-ngx ESig Parser v0.2.0 — https://github.com/Exerra/paperless-esig
+   [paperless.parsers.registry]   [third-party] Paperless-ngx ESig Parser v0.3.0 — https://github.com/Exerra/paperless-esig
    ```
 
    If the logs say `No third-party parsers discovered.` instead, see [Troubleshooting](#troubleshooting).
@@ -136,7 +136,7 @@ docker build -t paperless-ngx-esig .
 Build a specific release:
 
 ```sh
-docker build --build-arg ESIG_VERSION=0.2.0 -t paperless-ngx-esig .
+docker build --build-arg ESIG_VERSION=0.3.0 -t paperless-ngx-esig .
 ```
 
 Build from your local checkout, for development or unreleased changes:
