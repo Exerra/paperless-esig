@@ -1,6 +1,6 @@
 [project]
 name = "paperless-esig"
-version = "0.2.0"
+version = "0.3.0"
 description = "Third-party parser for EU e-signed documents (ETSI ASiC-E containers .edoc/.asice/.bdoc/.adoc, CAdES .p7m/.p7s, PAdES PDFs) for Paperless-ngx"
 readme = "README.md"
 requires-python = ">=3.11"
