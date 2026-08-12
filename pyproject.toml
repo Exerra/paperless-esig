@@ -1,15 +1,18 @@
 [project]
 name = "paperless-esig"
 version = "0.2.0"
-description = "Third-party parser for EU e-signed documents (ETSI ASiC-E containers: .edoc, .asice, .bdoc, .adoc; XAdES today, CAdES & more planned) for Paperless-ngx"
+description = "Third-party parser for EU e-signed documents (ETSI ASiC-E containers .edoc/.asice/.bdoc/.adoc, CAdES .p7m/.p7s, PAdES PDFs) for Paperless-ngx"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Exerra" }]
-keywords = ["paperless-ngx", "parser", "edoc", "asice", "xades", "signature"]
+keywords = ["paperless-ngx", "parser", "edoc", "asice", "xades", "cades", "pades", "signature"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
+dependencies = [
+  "asn1crypto>=1.5.1",
 ]
 
 [project.entry-points."paperless_ngx.parsers"]

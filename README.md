@@ -3,32 +3,35 @@
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=dark"><img alt="badge" src="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=light"></picture>
 
 Third-party parser for Paperless-ngx that adds support for **EU
-electronically signed documents** -- ETSI ASiC-E containers as used under
-the eIDAS regulation:
+electronically signed documents**:
 
-- `.edoc` - Latvia (EDOC 2.0)
-- `.asice` - Estonia
-- `.bdoc` - Estonia
-- `.adoc` - Lithuania
+- `.edoc` / `.asice` / `.bdoc` / `.adoc` - ETSI ASiC-E containers as used
+  under the eIDAS regulation (Latvia, Estonia, Lithuania)
+- `.p7m` / `.p7s` - standalone **CAdES** signatures
+- `.pdf` - **PAdES**-signed PDFs (detected by content, so unsigned PDFs
+  keep using the built-in parser)
 
-These files bundle the signed document (usually a PDF), an electronic
-signature, and a manifest inside a ZIP container. Paperless-ngx cannot
-consume them out of the box: libmagic reports them as `application/zip`
-and they are rejected.
+ASiC-E containers bundle the signed document (usually a PDF), an
+electronic signature, and a manifest inside a ZIP archive. Paperless-ngx
+cannot consume them out of the box: libmagic reports them as
+`application/zip` and they are rejected. The same goes for CAdES files
+(libmagic reports `application/octet-stream`) and PAdES signatures, whose
+metadata would otherwise be invisible.
 
 ## What it does
 
-- Stores the **original container unchanged** (required for legal compliance)
+- Stores the **original file unchanged** (required for legal compliance)
 - Extracts the signed PDF as the display/archive rendition (browsers cannot
-  render ZIP containers)
-- Extracts the text of the inner documents for search
-- Uses the **signature signing time** as the document date
+  render ZIP containers; the PAdES PDF itself is the rendition and keeps
+  its signature)
+- Extracts the text of the PDF for search
+- Uses the **signature signing time** as the document date (with a
+  fallback to the PAdES `/M` field or the PDF creation date)
 - Shows the **signature metadata** in the metadata tab: signer name,
   organisation and country, signing time, certificate chain and issuer,
   RFC 3161 timestamp authority, OCSP presence
 - Performs **offline cryptographic verification** and reports whether the
-  document digest, the SignedProperties digest and the signature value
-  are valid
+  document digest and the signature value are valid
 - Handles nested containers ("EDOC within EDOC", as produced by the Latvian
   e-archive) and multi-document containers (multiple PDFs and office
   documents merged into a single rendition)
@@ -45,10 +48,26 @@ and they are rejected.
 
 ## Signature formats
 
-Currently **XAdES** signatures are parsed and verified. Support for
-**CAdES** (and other signature types found in the wild) is planned.
+* **XAdES** inside ETSI ASiC-E containers (`.edoc`, `.asice`, `.bdoc`,
+  `.adoc`) — signing time, signer certificate, certificate chain, RFC 3161
+  timestamp and OCSP values, offline verification of the document digest,
+  the SignedProperties digest and the signature value.
+* **CAdES** (`CMS SignedData`, ETSI EN 319 122) — `.p7m` files with the
+  signed document attached (the embedded PDF becomes the rendition) and
+  the CMS signing time, signer and verification results as metadata.
+  Detached `.p7s` signatures are detected but rejected during parsing
+  with a clear error (they carry no document).
+* **PAdES** — PDFs signed with the `ETSI.CAdES.detached` or
+  `adbe.pkcs7.detached` subfilter. The signed PDF is the rendition, the
+  document date prefers the CMS signing time and falls back to the
+  signature's `/M` field, and the covered byte range, signer and
+  verification results are exposed as metadata.
 
-If you want to help bring CAdES support and don't mind exposing your full name to me, please sign a PDF of your choosing and send it to me. My email is in my [profile](https://github.com/Exerra). After implementation a fake CAdES document generator will be written to avoid storing real documents, just like with the existing XAdES tests. 
+Both DER and BER (indefinite-length) CMS encodings are accepted — some
+signers (e.g. the Uruguayan TuID `adbe.pkcs7.detached` files) emit BER.
+Verification is offline only: it proves the digest and signature value
+are cryptographically consistent with the signer certificate, but does
+not validate trust chains, revocation status or timestamps.
 ## Quick start
 
 You need a working Paperless-ngx installation. Two ways to add the parser:
@@ -93,9 +112,9 @@ uv pip install paperless-esig
    ```
    [paperless.parsers.registry]   [third-party] Paperless-ngx ESig Parser v0.2.0 — https://github.com/Exerra/paperless-esig
    ```
-2. Upload an `.edoc` / `.asice` / `.bdoc` / `.adoc` file. It should be
-   consumed, display the inner PDF, and show signature metadata in the
-   metadata tab.
+2. Upload an `.edoc` / `.asice` / `.bdoc` / `.adoc` / `.p7m` file, or a
+   PAdES-signed PDF. It should be consumed, display the inner PDF, and
+   show signature metadata in the metadata tab.
 
 If the parser line is missing, see [Troubleshooting](#troubleshooting).
 
@@ -200,14 +219,19 @@ and `paperless_esig-<version>.tar.gz`.
 
 ## Limitations
 
-- Documents are stored with `document.mime_type == "application/zip"`,
-  because a third-party parser can only declare the MIME type that
-  libmagic actually reports. The original filename extension (`.edoc`,
-  `.asice`, …) is preserved in the stored filename.
+- Documents are stored with the MIME type libmagic actually reports
+  (`application/zip` for ASiC-E containers, `application/octet-stream`
+  for CAdES files). The original filename extension (`.edoc`, `.asice`,
+  `.p7m`, …) is preserved in the stored filename.
 - Plain ZIP files pass the API/mail upload validation (the parser cannot
   inspect a file at validation time) but are rejected during consumption
   with a clear "Unsupported mime type" error. ZIP files placed in the
-  consume directory are attempted instead of silently skipped.
+  consume directory are attempted instead of silently skipped. The same
+  applies to `application/octet-stream` files — CAdES signatures are the
+  only octet-stream files actually consumed, everything else is rejected
+  during consumption with a clear error.
+- Detached `.p7s` signatures are detected but rejected during parsing:
+  they carry no document inside, so there is nothing to display or search.
 - Office documents (DOCX, ODT, …) inside a container are converted to PDF
   via **Gotenberg** and their text is extracted via **Tika** when those
   services are configured (`PAPERLESS_TIKA_ENDPOINT`); without them the
