@@ -1,23 +1,20 @@
 """
 Helpers for building synthetic CAdES signatures and PAdES PDFs in tests.
 
-The real-world samples (Italian CIE and Uruguayan TuID PDFs) contain
-personal data, so the test suite constructs its own files from scratch:
-a minimal PDF payload, self-signed signer certificates and genuine CMS
-SignedData signatures (attached for ``.p7m``, detached for PAdES), in
-both DER and BER (indefinite-length) encodings.
+Real signed documents contain personal data, so the test suite
+constructs its own files from scratch: a minimal PDF payload,
+self-signed signer certificates and genuine CMS SignedData signatures
+(attached for ``.p7m``, detached for PAdES), in both DER and BER
+(indefinite-length) encodings.
 
-Two signature profiles are supported, mirroring the real-world producers:
+Two signature profiles are supported, mirroring common producers:
 
 * RSA + SHA-256 (``sha256_rsa``) with the ``ETSI.CAdES.detached``
-  subfilter — the Italian CIE / PAdES convention, and
-* ECDSA P-256 with the ``adbe.pkcs7.detached`` subfilter — the
-  classic Adobe convention (BER-encoded in the Uruguayan samples).
+  subfilter, and
+* ECDSA P-256 with the ``adbe.pkcs7.detached`` subfilter — the classic
+  Adobe convention (BER-encoded in some deployments).
 
-The cryptographic structure mirrors what real CAdES/PAdES files look
-like — the parsing code is verified against the real-world samples
-(Italian CIE, Uruguayan TuID and Brazilian ICP-Brasil files) during
-development.
+The cryptographic structure mirrors real CAdES/PAdES files.
 """
 
 from __future__ import annotations

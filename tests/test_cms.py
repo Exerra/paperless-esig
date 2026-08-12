@@ -2,8 +2,8 @@
 Tests for the CMS (CAdES) and PAdES parsing modules.
 
 These run against synthetically signed data built by
-:mod:`cades_fixtures` (no real-world personal data) and mirror the
-real-world signature profiles: RSA and ECDSA, attached and detached
+:mod:`cades_fixtures` (no personal data) and mirror the signature
+profiles found in the wild: RSA and ECDSA, attached and detached
 content, DER and BER encodings.
 """
 
@@ -314,17 +314,17 @@ class TestSignerCertificateName:
         assert esig_cms.signer_certificate_name(signer) == "Jānis Bērziņš"
 
     def test_personal_code_cn_falls_back_to_given_surname(self) -> None:
-        # Italian CIE-style certificates embed a tax code in the CN.
+        # Some national certificates embed a personal code in the CN.
         key, cert, _ = build_signer(
-            common_name="PZZMRL74L15Z613N",
+            common_name="CODE1234X",
             organization=None,
-            given_name="MARIO RAUL",
-            surname="PIZZOLANTE",
+            given_name="Sample",
+            surname="Person",
         )
         signer = esig_cms.parse_cms(
             build_cms(b"x", key=key, certificate=cert),
         ).signers[0]
-        assert esig_cms.signer_certificate_name(signer) == "MARIO RAUL PIZZOLANTE"
+        assert esig_cms.signer_certificate_name(signer) == "Sample Person"
 
     def test_placeholder_cn_returns_none(self) -> None:
         key, cert, _ = build_signer(common_name="Private", organization=None)

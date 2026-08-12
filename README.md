@@ -2,249 +2,207 @@
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=dark"><img alt="badge" src="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=light"></picture>
 
-Third-party parser for Paperless-ngx that adds support for **EU
-electronically signed documents**:
+paperless-esig is a third-party parser for Paperless-ngx. It adds support for EU electronically signed documents.
 
-- `.edoc` / `.asice` / `.bdoc` / `.adoc` - ETSI ASiC-E containers as used
-  under the eIDAS regulation (Latvia, Estonia, Lithuania)
-- `.p7m` / `.p7s` - standalone **CAdES** signatures
-- `.pdf` - **PAdES**-signed PDFs (detected by content, so unsigned PDFs
-  keep using the built-in parser)
+## Supported formats
 
-ASiC-E containers bundle the signed document (usually a PDF), an
-electronic signature, and a manifest inside a ZIP archive. Paperless-ngx
-cannot consume them out of the box: libmagic reports them as
-`application/zip` and they are rejected. The same goes for CAdES files
-(libmagic reports `application/octet-stream`) and PAdES signatures, whose
-metadata would otherwise be invisible.
+- ASiC-E containers (`.edoc`, `.asice`, `.bdoc`, `.adoc`), as used under the eIDAS regulation in Latvia, Estonia, and Lithuania. A container is a ZIP archive that bundles the signed document, the signature, and a manifest.
+- Standalone CAdES signatures (`.p7m`).
+- PAdES-signed PDFs (`.pdf`). Detection is by content, so unsigned PDFs keep using the built-in parser.
 
-## What it does
+Paperless-ngx does not consume these files by default. libmagic reports ASiC-E containers as `application/zip` and CAdES files as `application/octet-stream`, and both are rejected. PAdES signature metadata is not exposed by the built-in parser.
 
-- Stores the **original file unchanged** (required for legal compliance)
-- Extracts the signed PDF as the display/archive rendition (browsers cannot
-  render ZIP containers; the PAdES PDF itself is the rendition and keeps
-  its signature)
-- Extracts the text of the PDF for search
-- Uses the **signature signing time** as the document date (with a
-  fallback to the PAdES `/M` field or the PDF creation date)
-- Shows the **signature metadata** in the metadata tab: signer name,
-  organisation and country, signing time, certificate chain and issuer,
-  RFC 3161 timestamp authority, OCSP presence
-- Performs **offline cryptographic verification** and reports whether the
-  document digest and the signature value are valid
-- Handles nested containers ("EDOC within EDOC", as produced by the Latvian
-  e-archive) and multi-document containers (multiple PDFs and office
-  documents merged into a single rendition)
-- **Assigns the signer as the document's correspondent**: after
-  consumption, if no correspondent was determined by content matching or
-  workflow rules, the signer (organisation preferred over common name) is
-  looked up case-insensitively and created if it does not exist, and the
-  document is re-indexed so the correspondent is searchable immediately.
-  Disable with `PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT=false`
-  (default: enabled). Known limitations: the assignment is not recorded in
-  the audit log, and the UI may show the new correspondent as "Private"
-  until the page is reloaded (the frontend's name-list caches are not
-  invalidated when a correspondent is created server-side).
+<details>
+<summary>Signature formats in detail</summary>
 
-## Signature formats
+### XAdES
 
-* **XAdES** inside ETSI ASiC-E containers (`.edoc`, `.asice`, `.bdoc`,
-  `.adoc`) — signing time, signer certificate, certificate chain, RFC 3161
-  timestamp and OCSP values, offline verification of the document digest,
-  the SignedProperties digest and the signature value.
-* **CAdES** (`CMS SignedData`, ETSI EN 319 122) — `.p7m` files with the
-  signed document attached (the embedded PDF becomes the rendition) and
-  the CMS signing time, signer and verification results as metadata.
-  Detached `.p7s` signatures are detected but rejected during parsing
-  with a clear error (they carry no document).
-* **PAdES** — PDFs signed with the `ETSI.CAdES.detached` or
-  `adbe.pkcs7.detached` subfilter. The signed PDF is the rendition, the
-  document date prefers the CMS signing time and falls back to the
-  signature's `/M` field, and the covered byte range, signer and
-  verification results are exposed as metadata.
+Used inside ETSI ASiC-E containers (`.edoc`, `.asice`, `.bdoc`, `.adoc`). The parser extracts the signing time, signer certificate, certificate chain, RFC 3161 timestamp, and OCSP values. It verifies the document digest, the SignedProperties digest, and the signature value offline.
 
-Both DER and BER (indefinite-length) CMS encodings are accepted — some
-signers (e.g. the Uruguayan TuID `adbe.pkcs7.detached` files) emit BER.
-Verification is offline only: it proves the digest and signature value
-are cryptographically consistent with the signer certificate, but does
-not validate trust chains, revocation status or timestamps.
-## Quick start
+### CAdES
 
-You need a working Paperless-ngx installation. Two ways to add the parser:
+CMS SignedData (ETSI EN 319 122) in `.p7m` files. The embedded PDF becomes the rendition. The CMS signing time, signer, and verification results are exposed as metadata. Detached `.p7s` signatures are detected but rejected during parsing with a clear error, because they carry no document.
 
-### Option A: Docker (recommended)
+### PAdES
 
-Clone the repo and build the image (or see [Building the Docker image](#building-the-docker-image)
-for all options):
+PDFs signed with the `ETSI.CAdES.detached` or `adbe.pkcs7.detached` subfilter. The signed PDF is the rendition. The document date prefers the CMS signing time and falls back to the signature's `/M` field. The covered byte range, signer, and verification results are exposed as metadata.
 
-```sh
-docker build -t paperless-ngx-esig .
-```
+### Encoding notes
 
-Then edit your `docker-compose.yml`: replace the `webserver` image with
-your build:
+Both DER and BER (indefinite-length) CMS encodings are accepted. Some signers, such as the `adbe.pkcs7.detached` flavour, emit BER. Verification is offline only. It proves that the document digest and the signature value are consistent with the signer certificate. It does not validate trust chains, revocation status, or timestamps.
 
-```yaml
-services:
-  webserver:
-    image: paperless-ngx-esig
-    # ...everything else stays the same
-```
+</details>
 
-Restart: `docker compose up -d`.
+## What the parser does
 
-### Option B: Bare metal
+- Stores the original file unchanged. This is required for legal compliance.
+- Extracts the signed PDF as the display and archive rendition. Browsers cannot render ZIP containers. A PAdES PDF is already a rendition and keeps its signature.
+- Extracts the text of the PDF for search.
+- Sets the document date from the signature signing time, with fallbacks to the PAdES `/M` field and the PDF creation date.
+- Displays signature metadata in the metadata tab: signer name, organisation, country, signing time, certificate chain and issuer, RFC 3161 timestamp authority, and OCSP presence.
+- Verifies the document digest and the signature value offline.
+- Handles nested containers (an EDOC inside an EDOC, as produced by the Latvian e-archive) and multi-document containers (multiple PDFs and office documents merged into a single rendition).
+- Assigns the signer as the document's correspondent. This happens after consumption, only when no correspondent was determined by content matching or workflow rules. The signer (organisation preferred over common name) is looked up case-insensitively and created if it does not exist, and the document is re-indexed so the correspondent is searchable immediately. This is enabled by default. Disable it with `PAPERLESS_ESIG_ASSIGN_SIGNER_AS_CORRESPONDENT=false`. Known limitations: the assignment is not recorded in the audit log, and the UI may show the new correspondent as "Private" until the page is reloaded.
+
+## Install
+
+The parser runs inside Paperless-ngx. Use one of two methods.
+
+### Method 1: Docker
+
+1. Clone this repository and build the image:
+
+   ```sh
+   docker build -t paperless-ngx-esig .
+   ```
+
+2. In `docker-compose.yml`, replace the `webserver` image with your build:
+
+   ```yaml
+   services:
+     webserver:
+       image: paperless-ngx-esig
+       # ...everything else stays the same
+   ```
+
+3. Restart the stack:
+
+   ```sh
+   docker compose up -d
+   ```
+
+### Method 2: Bare metal
+
+Install the package into the same virtual environment that runs Paperless-ngx:
 
 ```sh
 uv pip install paperless-esig
 ```
 
-(install into the same virtual environment that runs Paperless-ngx)
-
 ## Verify the install
 
-1. Start Paperless-ngx and watch the logs. You should see a line like:
+1. Start Paperless-ngx and check the logs. Look for a line like this:
 
-   ```
-   No third-party parsers discovered.
-   ```
-   replaced by something like:
    ```
    [paperless.parsers.registry]   [third-party] Paperless-ngx ESig Parser v0.2.0 — https://github.com/Exerra/paperless-esig
    ```
-2. Upload an `.edoc` / `.asice` / `.bdoc` / `.adoc` / `.p7m` file, or a
-   PAdES-signed PDF. It should be consumed, display the inner PDF, and
-   show signature metadata in the metadata tab.
 
-If the parser line is missing, see [Troubleshooting](#troubleshooting).
+   If the logs say `No third-party parsers discovered.` instead, see [Troubleshooting](#troubleshooting).
 
-## Building the Docker image
-
-```sh
-# latest release from PyPI (default)
-docker build -t paperless-ngx-esig .
-
-# a specific release
-docker build --build-arg ESIG_VERSION=0.2.0 -t paperless-ngx-esig .
-
-# your local checkout — for development or unreleased changes
-docker build --build-arg ESIG_SOURCE=local -t paperless-ngx-esig .
-
-# a specific Paperless-ngx base version
-docker build --build-arg PAPERLESS_VERSION=2.14.7 -t paperless-ngx-esig .
-```
-
-`make docker` / `make docker-local` are shortcuts for the first and third
-commands.
-
-## Development
-
-### Prerequisites
-
-- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`)
-- Python 3.11+ (uv will install it for you)
-- Docker (only for the Docker image targets)
-- A checkout of [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx)
-  for the test suite (see below)
-
-### Step by step
-
-```sh
-# 1. Get the code
-git clone https://github.com/Exerra/paperless-esig.git
-cd paperless-esig
-
-# 2. Create a virtual environment and install everything
-#    (package + dev dependencies: django, pytest, ruff, ...)
-uv sync
-
-# 3. Get a Paperless-ngx checkout for the test suite.
-#    The tests import Paperless-ngx's own code, so it must be on PYTHONPATH.
-#    Any working checkout of the dev branch works:
-git clone --depth 1 https://github.com/paperless-ngx/paperless-ngx.git ../paperless-ngx
-
-# 4. Run the tests
-PYTHONPATH=../paperless-ngx/src uv run pytest
-#    or just:  make test
-
-# 5. Lint
-uv run ruff check src tests
-#    or just:  make lint
-```
-
-Notes:
-
-- `make test` uses `PAPERLESS_NGX_SRC` (default: `../paperless-ngx/src`
-  relative to this repo). Override with
-  `make test PAPERLESS_NGX_SRC=/path/to/paperless-ngx/src`.
-- The tests build synthetic signed containers (no real personal data) and
-  only need the Paperless-ngx source importable — no database or running
-  instance required.
-
-### Building a wheel locally
-
-```sh
-uv build
-#    or just:  make build
-```
-
-Artifacts land in `dist/` as `paperless_esig-<version>-py3-none-any.whl`
-and `paperless_esig-<version>.tar.gz`.
-
-## Makefile cheat sheet
-
-| Command                    | What it does                                        |
-| -------------------------- | --------------------------------------------------- |
-| `make venv`                | Create venv + install dev dependencies (`uv sync`)  |
-| `make test`                | Run the test suite                                  |
-| `make lint`                | Run ruff                                            |
-| `make build`               | Build wheel + sdist into `dist/`                    |
-| `make docker`              | Build the image from the latest PyPI release        |
-| `make docker-local`        | Build the image from your local checkout            |
-| `make clean`               | Remove build artifacts and caches                   |
-
-## Troubleshooting
-
-- **"No third-party parsers discovered" in the logs** — the package is not
-  installed in the environment Paperless-ngx runs in. For Docker, check
-  your compose file points at the image you built (`docker images`).
-- **`uv: command not found`** — install uv first (see
-  [Prerequisites](#prerequisites)). Alternatively `python3 -m pip install .`
-  works too.
-- **Tests fail with `ModuleNotFoundError: No module named 'documents'`** —
-  the Paperless-ngx checkout is missing or not on `PYTHONPATH`. See step 3
-  in [Development](#development).
-- **Plain ZIP files are rejected with "Unsupported mime type"** — expected.
-  See [Limitations](#limitations).
+2. Upload an `.edoc`, `.asice`, `.bdoc`, `.adoc`, or `.p7m` file, or a PAdES-signed PDF. The document is consumed, displays the inner PDF, and shows signature metadata in the metadata tab.
 
 ## Limitations
 
-- Documents are stored with the MIME type libmagic actually reports
-  (`application/zip` for ASiC-E containers, `application/octet-stream`
-  for CAdES files). The original filename extension (`.edoc`, `.asice`,
-  `.p7m`, …) is preserved in the stored filename.
-- Plain ZIP files pass the API/mail upload validation (the parser cannot
-  inspect a file at validation time) but are rejected during consumption
-  with a clear "Unsupported mime type" error. ZIP files placed in the
-  consume directory are attempted instead of silently skipped. The same
-  applies to `application/octet-stream` files — CAdES signatures are the
-  only octet-stream files actually consumed, everything else is rejected
-  during consumption with a clear error.
-- Detached `.p7s` signatures are detected but rejected during parsing:
-  they carry no document inside, so there is nothing to display or search.
-- Office documents (DOCX, ODT, …) inside a container are converted to PDF
-  via **Gotenberg** and their text is extracted via **Tika** when those
-  services are configured (`PAPERLESS_TIKA_ENDPOINT`); without them the
-  DOCX text is still extracted locally and the affected pages are omitted
-  from the rendition.
+- Documents are stored with the MIME type that libmagic reports. ASiC-E containers are stored as `application/zip` and CAdES files as `application/octet-stream`. The original file extension (`.edoc`, `.asice`, `.p7m`, and so on) is preserved in the stored filename.
+- Plain ZIP files pass API and mail upload validation but are rejected during consumption with an "Unsupported mime type" error. The parser cannot inspect a file at validation time. ZIP files placed in the consume directory are attempted instead of silently skipped. The same applies to `application/octet-stream` files: CAdES signatures are the only octet-stream files that are consumed.
+- Detached `.p7s` signatures are detected but rejected during parsing. They carry no document, so there is nothing to display or search.
+- Office documents (DOCX, ODT, and similar) inside a container are converted to PDF by Gotenberg, and their text is extracted by Tika, when those services are configured with `PAPERLESS_TIKA_ENDPOINT`. Without them, the DOCX text is still extracted locally and the affected pages are omitted from the rendition.
 
 ## Requirements
 
-- Paperless-ngx 2.x (uses the `paperless_ngx.parsers` entrypoint registry)
-- The inner PDF is required for display; containers without any PDF cannot
-  be ingested
+- Paperless-ngx 2.x. The parser uses the `paperless_ngx.parsers` entrypoint registry.
+- The container must contain a PDF. Containers without a PDF cannot be ingested.
+
+## Troubleshooting
+
+- `No third-party parsers discovered.` in the logs. The package is not installed in the environment that Paperless-ngx runs in. For Docker, check that your compose file points at the image you built (`docker images`).
+- `uv: command not found`. Install uv first. Alternatively, `python3 -m pip install .` works.
+- Plain ZIP files are rejected with "Unsupported mime type". This is expected. See [Limitations](#limitations).
 
 ## License
 
-GPL-3.0-or-later (derived from the Paperless-ngx project, which is
-GPL-3.0).
+GPL-3.0-or-later. Derived from the Paperless-ngx project, which is GPL-3.0.
+
+## For developers
+
+<details>
+<summary>Building the Docker image</summary>
+
+The build defaults to the latest release from PyPI:
+
+```sh
+docker build -t paperless-ngx-esig .
+```
+
+Build a specific release:
+
+```sh
+docker build --build-arg ESIG_VERSION=0.2.0 -t paperless-ngx-esig .
+```
+
+Build from your local checkout, for development or unreleased changes:
+
+```sh
+docker build --build-arg ESIG_SOURCE=local -t paperless-ngx-esig .
+```
+
+Build against a specific Paperless-ngx base version:
+
+```sh
+docker build --build-arg PAPERLESS_VERSION=2.14.7 -t paperless-ngx-esig .
+```
+
+`make docker` and `make docker-local` are shortcuts for the first and third commands.
+
+</details>
+
+<details>
+<summary>Development</summary>
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/)
+- Python 3.11 or newer (uv installs it for you)
+- Docker, only for the Docker image targets
+- A checkout of [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx), for the test suite
+
+### Set up
+
+```sh
+git clone https://github.com/Exerra/paperless-esig.git
+cd paperless-esig
+uv sync
+git clone --depth 1 https://github.com/paperless-ngx/paperless-ngx.git ../paperless-ngx
+```
+
+`uv sync` creates a virtual environment and installs the package plus dev dependencies (django, pytest, ruff, and others). The tests import Paperless-ngx's own code, so the checkout must be on `PYTHONPATH`.
+
+### Run the tests
+
+```sh
+PYTHONPATH=../paperless-ngx/src uv run pytest
+```
+
+`make test` does the same. It uses `PAPERLESS_NGX_SRC`, which defaults to `../paperless-ngx/src` relative to this repo. Override it with `make test PAPERLESS_NGX_SRC=/path/to/paperless-ngx/src`.
+
+The tests build synthetic signed containers. They do not contain real personal data. They need only the Paperless-ngx source importable. No database or running instance is required.
+
+If the tests fail with `ModuleNotFoundError: No module named 'documents'`, the Paperless-ngx checkout is missing or not on `PYTHONPATH`.
+
+### Lint
+
+```sh
+uv run ruff check src tests
+```
+
+### Build a wheel
+
+```sh
+uv build
+```
+
+Artifacts land in `dist/` as `paperless_esig-<version>-py3-none-any.whl` and `paperless_esig-<version>.tar.gz`.
+
+### Makefile targets
+
+| Command | What it does |
+| --- | --- |
+| `make venv` | Create venv and install dev dependencies (`uv sync`) |
+| `make test` | Run the test suite |
+| `make lint` | Run ruff |
+| `make build` | Build wheel and sdist into `dist/` |
+| `make docker` | Build the image from the latest PyPI release |
+| `make docker-local` | Build the image from your local checkout |
+| `make clean` | Remove build artifacts and caches |
+
+</details>
