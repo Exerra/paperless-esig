@@ -2,7 +2,7 @@
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=dark"><img alt="badge" src="https://shieldcn.dev/badge/Paperless--ngx-398439.svg?logo=paperlessngx&amp;mode=light"></picture>
 
-paperless-esig is a third-party parser for Paperless-ngx. It adds support for EU electronically signed documents.
+Third-party parser for Paperless-ngx, which adds support for EU electronically signed documents.
 
 ## Supported formats
 
