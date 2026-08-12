@@ -38,16 +38,6 @@ _BYTE_RANGE_RE: re.Pattern[bytes] = re.compile(
     rb"/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]",
 )
 
-#: SubFilters known to carry a CMS SignedData.
-_SIGNED_SUBFILTERS: frozenset[str] = frozenset(
-    {
-        "ETSI.CAdES.detached",
-        "adbe.pkcs7.detached",
-        "adbe.x509.rsa_sha1",
-        "adbe.x509.rsa_sha256",
-    },
-)
-
 
 @dataclass(frozen=True)
 class PdfSignature:
@@ -122,7 +112,6 @@ def find_pdf_signatures(pdf_data: bytes) -> list[PdfSignature]:
     """
     signatures: list[PdfSignature] = []
     try:
-
         signatures = _find_signatures_with_pikepdf(pdf_data)
     except Exception as err:
         logger.debug("pikepdf signature extraction failed: %s", err)
@@ -213,7 +202,7 @@ def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
     try:
-        text = str(value).lstrip("/")
+        text = str(value).removeprefix("/")
         return text or None
     except Exception:  # pragma: no cover
         return None
@@ -222,22 +211,23 @@ def _string_or_none(value: Any) -> str | None:
 def _find_signatures_byte_scan(pdf_data: bytes) -> list[PdfSignature]:
     """Byte-level fallback: find every /ByteRange + /Contents pair.
 
-    The signature dictionary layout varies (``/Contents`` may follow
+    The signature dictionary layout varies: ``/Contents`` may follow
     ``/ByteRange`` directly or after other keys, and ``/SubFilter`` may
-    appear after a multi-kilobyte ``/Contents``), so the whole tail of
-    the file starting at the ``/ByteRange`` is scanned.
+    appear before ``/ByteRange`` or after a multi-kilobyte
+    ``/Contents``, so a window spanning the dictionary is scanned.
     """
     signatures: list[PdfSignature] = []
     for match in _BYTE_RANGE_RE.finditer(pdf_data):
         numbers = tuple(int(group) for group in match.groups())
-        tail = pdf_data[match.start() :]
-        subfilter_match = re.search(rb"/SubFilter\s*/([A-Za-z0-9._]+)", tail)
+        window_start = max(0, match.start() - 1024)
+        window = pdf_data[window_start:]
+        subfilter_match = re.search(rb"/SubFilter\s*/([A-Za-z0-9._]+)", window)
         subfilter = (
             subfilter_match.group(1).decode("ascii", errors="replace")
             if subfilter_match
             else None
         )
-        contents_match = re.search(rb"/Contents\s*<([0-9A-Fa-f]*)>", tail)
+        contents_match = re.search(rb"/Contents\s*<([0-9A-Fa-f]*)>", window)
         contents: bytes = b""
         if contents_match:
             try:

@@ -51,20 +51,6 @@ def _write_pades(tmp_path: Path, pdf: bytes, filename: str = "doc.pdf") -> Path:
     return path
 
 
-def _pades_cms(covered: bytes, *, ecdsa: bool = False) -> tuple[bytes, object]:
-    key, cert, _ = build_signer(curve="ecdsa" if ecdsa else "rsa")
-    return (
-        build_cms(
-            covered,
-            key=key,
-            certificate=cert,
-            attached=False,
-            signing_time=_SIGNING_TIME,
-        ),
-        key,
-    )
-
-
 def _build_signed_pdf(
     *,
     subfilter: str = "ETSI.CAdES.detached",
@@ -131,6 +117,32 @@ class TestCadesScoring:
                 "application/octet-stream",
                 path.name,
                 path,
+            )
+            is None
+        )
+
+    def test_pkcs7_mime_content_checked_with_path(self, tmp_path: Path) -> None:
+        key, cert, _ = build_signer()
+        valid = _write_cades(
+            tmp_path,
+            build_cms(b"x", key=key, certificate=cert),
+            filename="doc.p7m",
+        )
+        assert (
+            ESigDocumentParser.score(
+                "application/pkcs7-mime",
+                valid.name,
+                valid,
+            )
+            == 10
+        )
+        invalid = tmp_path / "not-signed.p7m"
+        invalid.write_bytes(b"definitely not a CMS")
+        assert (
+            ESigDocumentParser.score(
+                "application/pkcs7-mime",
+                invalid.name,
+                invalid,
             )
             is None
         )
@@ -204,6 +216,19 @@ class TestCadesParse:
         with pytest.raises(ParseError, match="attached content"):
             esig_parser.parse(path, "application/pkcs7-signature")
 
+    def test_parse_cades_non_pdf_content_raises(
+        self,
+        esig_parser: ESigDocumentParser,
+        tmp_path: Path,
+    ) -> None:
+        key, cert, _ = build_signer()
+        path = _write_cades(
+            tmp_path,
+            build_cms(b"<xml>not a pdf</xml>", key=key, certificate=cert),
+        )
+        with pytest.raises(ParseError, match="not a PDF"):
+            esig_parser.parse(path, "application/octet-stream")
+
     def test_parse_pades_extracts_text(
         self,
         esig_parser: ESigDocumentParser,
@@ -235,6 +260,30 @@ class TestCadesParse:
             7,
             tzinfo=datetime.UTC,
         )
+
+    def test_parse_pades_without_any_date(self, tmp_path: Path) -> None:
+        # No CMS signing time, no /M field, no PDF creation date in the
+        # synthetic payload: the date must be None.
+        key, cert, _ = build_signer()
+        template = build_pades_pdf(
+            _CONTENT_STREAM,
+            b"\x00" * 4096,
+            m=None,
+        )
+        covered = pades_covered_bytes(template)
+        cms_bytes = build_cms(
+            covered,
+            key=key,
+            certificate=cert,
+            attached=False,
+            with_signing_time=False,
+        )
+        pdf = build_pades_pdf(_CONTENT_STREAM, cms_bytes, m=None)
+        path = _write_pades(tmp_path, pdf)
+        with ESigDocumentParser() as parser:
+            parser.parse(path, "application/pdf")
+            assert parser.get_date() is None
+            assert parser.get_signer_name() == "Test Organization"
 
     def test_parse_plain_file_raises(
         self,
@@ -348,7 +397,76 @@ class TestCadesMetadata:
             == "false"
         )
 
-    def test_unsigned_pdf_metadata_empty(self, tmp_path: Path) -> None:
+    def test_p7m_metadata_with_timestamp_and_ocsp(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        key, cert, _ = build_signer()
+        path = _write_cades(
+            tmp_path,
+            build_cms(
+                b"%PDF-1.4\n%%EOF",
+                key=key,
+                certificate=cert,
+                with_timestamp=True,
+                with_ocsp=True,
+            ),
+        )
+        with ESigDocumentParser() as parser:
+            metadata = parser.extract_metadata(path, "application/octet-stream")
+        assert (
+            _metadata_value(metadata, "timestamp", "signature_timestamp")
+            == "present"
+        )
+        assert (
+            _metadata_value(metadata, "signature", "ocsp_response_count") == "1"
+        )
+
+    def test_p7m_metadata_certificate_chain(self, tmp_path: Path) -> None:
+        key, cert, _ = build_signer(common_name="Signer One", serial=1)
+        _, filler, _ = build_signer(common_name="Filler CA", serial=2)
+        path = _write_cades(
+            tmp_path,
+            build_cms(
+                b"%PDF-1.4\n%%EOF",
+                key=key,
+                certificate=cert,
+                include_certificates=[cert, filler],
+            ),
+        )
+        with ESigDocumentParser() as parser:
+            metadata = parser.extract_metadata(path, "application/octet-stream")
+        # CMS certificates are a SET OF, so ordering is not guaranteed.
+        chain = _metadata_value(metadata, "signature", "certificate_chain")
+        assert chain is not None
+        assert "Signer One" in chain
+        assert "Filler CA" in chain
+
+    def test_pades_metadata_name_field(self, tmp_path: Path) -> None:
+        key, cert, _ = build_signer()
+        template = build_pades_pdf(
+            _CONTENT_STREAM,
+            b"\x00" * 4096,
+            name="Test Signer Name",
+        )
+        covered = pades_covered_bytes(template)
+        cms_bytes = build_cms(covered, key=key, certificate=cert, attached=False)
+        pdf = build_pades_pdf(
+            _CONTENT_STREAM,
+            cms_bytes,
+            name="Test Signer Name",
+        )
+        path = _write_pades(tmp_path, pdf)
+        with ESigDocumentParser() as parser:
+            metadata = parser.extract_metadata(path, "application/pdf")
+        assert (
+            _metadata_value(metadata, "signature", "signer_pdf_name")
+            == "Test Signer Name"
+        )
+
+    def test_metadata_unreadable_path_returns_empty(self, tmp_path: Path) -> None:
+        with ESigDocumentParser() as parser:
+            assert parser.extract_metadata(tmp_path, "application/pdf") == []
         path = _write_pades(tmp_path, b"%PDF-1.4\n%%EOF")
         with ESigDocumentParser() as parser:
             assert parser.extract_metadata(path, "application/pdf") == []
@@ -380,6 +498,9 @@ class TestExtractSignerName:
     def test_pades_signer_name(self, tmp_path: Path) -> None:
         path = _write_pades(tmp_path, _build_signed_pdf())
         assert extract_signer_name(path) == "Test Organization"
+
+    def test_pades_signer_name_bytes(self) -> None:
+        assert extract_signer_name(_build_signed_pdf()) == "Test Organization"
 
     def test_unsigned_pdf_returns_none(self, tmp_path: Path) -> None:
         path = _write_pades(tmp_path, b"%PDF-1.4\n%%EOF")

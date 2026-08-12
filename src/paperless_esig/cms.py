@@ -250,7 +250,7 @@ def _resolve_signer_certificate(
 
     sid = signer_info["sid"]
     sid_native = sid.native
-    if sid_native is not None and "issuer" in sid_native:
+    if isinstance(sid_native, dict) and "issuer" in sid_native:
         serial = sid_native["serial_number"]
         issuer_values = {
             str(oid): str(value)
@@ -270,8 +270,8 @@ def _resolve_signer_certificate(
                 )
             if certificate_issuer == issuer_values:
                 return certificate
-    elif sid_native is not None and "subject_key_identifier" in sid_native:
-        expected = sid_native["subject_key_identifier"]
+    elif isinstance(sid_native, (bytes, bytearray)):
+        expected = bytes(sid_native)
         for certificate in certificates:
             try:
                 ski = certificate.extensions.get_extension_for_oid(
@@ -549,14 +549,24 @@ def _verify_with_key(
         return False
 
 
-#: Certificate common names that do not identify the signer.
-_PLACEHOLDER_CN_VALUES: frozenset[str] = frozenset(
+#: Certificate common names that do not identify the signer.  Some
+#: eParaksts mobile signing certificates use a generic subject
+#: ("Private" / "Privātpersona") instead of the person's name, so the
+#: common name alone cannot serve as a correspondent name then.
+PLACEHOLDER_CN_VALUES: frozenset[str] = frozenset(
     {"private", "privātpersona"},
 )
 
 
-def _certificate_name_attributes(cert) -> tuple[str | None, str | None, str | None]:
-    """Return ``(common_name, organization, country)`` of a certificate subject."""
+def certificate_name_attributes(
+    cert,
+) -> tuple[str | None, str | None, str | None]:
+    """Return ``(common_name, organization, country)`` of a certificate subject.
+
+    X.509 name attributes may be returned as ``bytes`` by
+    ``cryptography`` when the string type is not UTF-8; those are
+    decoded so the values are always strings.
+    """
     from cryptography.x509 import NameOID
 
     def _name_attribute(oid) -> str | None:
@@ -576,7 +586,7 @@ def _certificate_name_attributes(cert) -> tuple[str | None, str | None, str | No
     )
 
 
-def _personal_name(cert) -> str | None:
+def personal_name(cert) -> str | None:
     """Return the given-name + surname of a certificate subject, if any.
 
     Some national certificates (e.g. the Italian CIE) embed a personal
@@ -602,25 +612,31 @@ def _personal_name(cert) -> str | None:
     return None
 
 
-def signer_certificate_name(signer: CmsSignerInfo) -> str | None:
-    """Return a usable name for the signer of *signer*, or None.
+def signer_name_from_certificate(cert) -> str | None:
+    """Return a usable signer name from a certificate, or None.
 
-    The certificate's organization is preferred over the common name
-    (mirroring the XAdES path); placeholder common names ("Private") are
-    not usable, and common names that are personal codes (e.g. the
-    Italian CIE tax-code CNs) fall back to given name + surname.
+    The organization is preferred over the common name; placeholder
+    common names ("Private") are not usable, and common names that are
+    personal codes (e.g. the Italian CIE tax-code CNs) fall back to
+    given name + surname.
     """
-    if signer.certificate is None:
-        return None
-    common_name, organization, _ = _certificate_name_attributes(
-        signer.certificate,
-    )
+    common_name, organization, _ = certificate_name_attributes(cert)
     if organization:
         return organization
     if common_name:
         normalized = common_name.strip().lower()
-        if normalized not in _PLACEHOLDER_CN_VALUES and not any(
+        if normalized not in PLACEHOLDER_CN_VALUES and not any(
             char.isdigit() for char in normalized
         ):
             return common_name
-    return _personal_name(signer.certificate)
+    return personal_name(cert)
+
+
+def signer_certificate_name(signer: CmsSignerInfo) -> str | None:
+    """Return a usable name for the signer of *signer*, or None.
+
+    See :func:`signer_name_from_certificate` for the name resolution.
+    """
+    if signer.certificate is None:
+        return None
+    return signer_name_from_certificate(signer.certificate)
