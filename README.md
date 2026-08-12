@@ -6,11 +6,20 @@ paperless-esig is a third-party parser for Paperless-ngx. It adds support for EU
 
 ## Supported formats
 
-- ASiC-E containers (`.edoc`, `.asice`, `.bdoc`, `.adoc`), as used under the eIDAS regulation in Latvia, Estonia, and Lithuania. A container is a ZIP archive that bundles the signed document, the signature, and a manifest.
-- Standalone CAdES signatures (`.p7m`).
-- PAdES-signed PDFs (`.pdf`). Detection is by content, so unsigned PDFs keep using the built-in parser.
+| Format | Extensions |
+| --- | --- |
+| ASiC-E containers | `.edoc`, `.asice`, `.bdoc`, `.adoc` |
+| CAdES signatures | `.p7m` |
+| PAdES-signed PDFs | `.pdf` |
 
-Paperless-ngx does not consume these files by default. libmagic reports ASiC-E containers as `application/zip` and CAdES files as `application/octet-stream`, and both are rejected. PAdES signature metadata is not exposed by the built-in parser.
+Paperless-ngx does not consume these files by default. The parser is required for them.
+
+<details>
+<summary>Why Paperless-ngx cannot handle these files</summary>
+
+ASiC-E containers are ZIP archives. libmagic reports them as `application/zip`, and Paperless-ngx rejects the MIME type. CAdES files are reported as `application/octet-stream` and are also rejected. PAdES-signed PDFs are consumed, but the built-in parser does not expose their signature metadata.
+
+</details>
 
 <details>
 <summary>Signature formats in detail</summary>
