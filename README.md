@@ -44,7 +44,27 @@ Both DER and BER (indefinite-length) CMS encodings are accepted. Some signers, s
 
 ## What the parser does
 
-- Stores the original file unchanged. This is required for legal compliance.
+- **Stores the original file unchanged. This is required for legal compliance.**
+   <details>
+   <summary>Download the original file</summary>
+
+   The default download option returns the parsed PDF. The parsed PDF is not a signed document. To download the original file (`.edoc`, `.asice`, `.p7m`, and so on), use the "Download original" option instead.
+
+   PAdES-signed PDFs are not affected. For these files, the original file and the parsed rendition are the same document.
+
+   Web UI:
+
+   1. Open the document detail view.
+   2. Click the arrow next to "Download".
+   3. Select "Download original".
+
+   Mobile apps:
+
+   1. Use the share or download action.
+   2. Select the original document option.
+
+   The original document option is available in mobile apps such as Swift Paperless for iOS.
+   </details>
 - Extracts the signed PDF as the display and archive rendition. Browsers cannot render ZIP containers. A PAdES PDF is already a rendition and keeps its signature.
 - Extracts the text of the PDF for search.
 - Sets the document date from the signature signing time, with fallbacks to the PAdES `/M` field and the PDF creation date.
