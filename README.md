@@ -46,7 +46,7 @@ Both DER and BER (indefinite-length) CMS encodings are accepted. Some signers, s
 
 - **Stores the original file unchanged. This is required for legal compliance.**
    <details>
-   <summary>Download the original file</summary>
+   <summary>How to download the original file</summary>
 
    The default download option returns the parsed PDF. The parsed PDF is not a signed document. To download the original file (`.edoc`, `.asice`, `.p7m`, and so on), use the "Download original" option instead.
 
